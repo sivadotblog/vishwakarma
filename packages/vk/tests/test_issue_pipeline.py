@@ -15,7 +15,7 @@ from vk.approval import Caller
 from vk.config import Config
 from vk.github import GitHub
 from vk.pipeline import MAX_REVIEW_CYCLES, STATUS_LABELS, IssueOps, run_issue
-from vk.tools import preference_tools
+from vk.tools import preferences_path
 
 from .helpers import (
     ANALYSIS,
@@ -422,8 +422,9 @@ def test_exhausted_token_budget_is_not_retried(cfg: Config, remote: Path) -> Non
 
 
 def test_preferences_reach_the_pr_writer_only_when_attended(cfg: Config, remote: Path) -> None:
-    save = preference_tools(cfg, getpass.getuser())[1]
-    save.fn({"preferences": "Keep PR bodies under 100 words."})
+    path = preferences_path(cfg, getpass.getuser())
+    path.parent.mkdir(parents=True)
+    path.write_text("Keep PR bodies under 100 words.", encoding="utf-8")
 
     attended: list[Call] = []
     start(cfg, remote, happy_models(attended), caller=Caller(False))

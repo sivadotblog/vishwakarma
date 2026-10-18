@@ -6,15 +6,13 @@ from vk.config import Config
 from vk.tooling import Tool, ToolError
 from vk.tools import (
     MAX_ARTIFACT_LENGTH,
-    MAX_FACTORY_BRAIN_LENGTH,
     artifact_path,
     artifact_tools,
-    brain_tools,
     harness_tools,
     html_to_text,
     load_skill,
     preference_tools,
-    skill_tools,
+    preferences_path,
 )
 
 
@@ -148,29 +146,19 @@ def test_artifact_id_containment(cfg: Config, bad: str) -> None:
     assert read.fn({"id": bad}) == {"found": False}
 
 
-def test_brain_cap_and_roundtrip(cfg: Config) -> None:
-    t = by_name(brain_tools(cfg, can_write=True))
-    assert t["read_factory_brain"].fn({}) == {"brain": "", "found": False}
-    big = "x" * (MAX_FACTORY_BRAIN_LENGTH + 1)
-    assert t["update_factory_brain"].fn({"brain": big})["success"] is False
-    assert t["update_factory_brain"].fn({"brain": "notes"})["success"] is True
-    assert t["read_factory_brain"].fn({}) == {"brain": "notes", "found": True}
-    assert [x.name for x in brain_tools(cfg, can_write=False)] == ["read_factory_brain"]
-
-
 def test_preferences(cfg: Config) -> None:
     anon = by_name(preference_tools(cfg, None))
     got = anon["get_user_preferences"].fn({})
     assert got["found"] is False and "no signed-in user" in got["note"]
-    assert anon["save_user_preferences"].fn({"preferences": "x"})["success"] is False
 
     me = by_name(preference_tools(cfg, "alice"))
-    assert me["save_user_preferences"].fn({"preferences": "terse"})["success"] is True
+    assert me["get_user_preferences"].fn({})["found"] is False
+    path = preferences_path(cfg, "alice")
+    path.parent.mkdir(parents=True)
+    path.write_text("terse", encoding="utf-8")
     assert me["get_user_preferences"].fn({}) == {"found": True, "preferences": "terse"}
     other = by_name(preference_tools(cfg, "bob"))
     assert other["get_user_preferences"].fn({})["found"] is False
-    assert me["clear_user_preferences"].fn({}) == {"success": True, "deleted": True}
-    assert me["get_user_preferences"].fn({})["found"] is False
 
 
 def test_skills() -> None:
@@ -180,11 +168,3 @@ def test_skills() -> None:
         load_skill("../writing-quality")
     with pytest.raises(ToolError):
         load_skill("nope")
-    tool = skill_tools()[0]
-    assert (
-        tool.name == "load_skill"
-        and "writing-quality" in tool.fn({"name": "writing-quality"})[:5000]
-    ) or True
-    tool = skill_tools()[0]
-    assert tool.name == "load_skill"
-    assert tool.fn({"name": "writing-quality"}) == text

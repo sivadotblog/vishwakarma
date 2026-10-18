@@ -51,7 +51,7 @@ jobs:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           VK_BOT_LOGIN: ${{ steps.app-token.outputs.app-slug }}[bot]
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          VK_MODEL: ${{ vars.VK_MODEL || 'gemini/gemini-3.5-flash' }}
+          VK_MODEL: ${{ vars.VK_MODEL || 'google:gemini-3.5-flash' }}
           VK_REPO: ${{ github.repository }}
           VK_STATE_DIR: ${{ runner.temp }}/vk-state
           PYDANTIC_AI_NO_BANNER: "1"

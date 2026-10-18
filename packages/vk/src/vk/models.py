@@ -1,5 +1,5 @@
 # ruff: noqa: E501
-"""Typed structured outputs for every agent; the Pydantic mirror of `schemas.py`."""
+"""Typed structured outputs for every agent."""
 
 from typing import Literal
 

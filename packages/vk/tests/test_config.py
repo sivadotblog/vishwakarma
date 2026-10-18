@@ -50,6 +50,27 @@ def test_google_without_gemini_key_defers_to_provider() -> None:
 
 
 def test_bot_login_is_optional() -> None:
-    base = {"GITHUB_TOKEN": "t", "VK_MODEL": "m", "VK_REPO": "o/r"}
+    base = {"GITHUB_TOKEN": "t", "VK_MODEL": "google:m", "VK_REPO": "o/r"}
     assert load_config(base).bot_login is None
     assert load_config({**base, "VK_BOT_LOGIN": "vk-app[bot]"}).bot_login == "vk-app[bot]"
+
+
+@pytest.mark.parametrize(
+    ("override", "var"),
+    [
+        ({"VK_MODEL": "gemini/gemini-3.5-flash"}, "VK_MODEL"),
+        ({"VK_MODEL_PR_WRITER": "gemini-3.5-flash"}, "VK_MODEL_PR_WRITER"),
+    ],
+)
+def test_non_native_model_strings_are_rejected(override: dict[str, str], var: str) -> None:
+    env = {"GITHUB_TOKEN": "t", "VK_MODEL": "google:m", "VK_REPO": "o/r", **override}
+    with pytest.raises(ConfigError, match=rf"{var}=.*provider:model.*google:gemini-3.5-flash"):
+        load_config(env)
+
+
+@pytest.mark.parametrize("agent", ["TRIAGE", "PR_WRITER", "DECIDER", "CI_DIAGNOSER", "ANALYST"])
+def test_every_agent_can_have_a_model_override(agent: str) -> None:
+    env = {"GITHUB_TOKEN": "t", "VK_MODEL": "google:m", "VK_REPO": "o/r"}
+    cfg = load_config({**env, f"VK_MODEL_{agent}": "anthropic:x"})
+    assert cfg.model_for(agent.lower()) == "anthropic:x"
+    assert cfg.model_for("implementer") == "google:m"
