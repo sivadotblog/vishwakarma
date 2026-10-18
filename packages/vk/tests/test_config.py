@@ -68,7 +68,7 @@ def test_non_native_model_strings_are_rejected(override: dict[str, str], var: st
         load_config(env)
 
 
-@pytest.mark.parametrize("agent", ["TRIAGE", "PR_WRITER", "DECIDER", "CI_DIAGNOSER", "ANALYST"])
+@pytest.mark.parametrize("agent", ["TRIAGER", "PR_WRITER", "CI_DIAGNOSER", "ANALYST"])
 def test_every_agent_can_have_a_model_override(agent: str) -> None:
     env = {"GITHUB_TOKEN": "t", "VK_MODEL": "google:m", "VK_REPO": "o/r"}
     cfg = load_config({**env, f"VK_MODEL_{agent}": "anthropic:x"})

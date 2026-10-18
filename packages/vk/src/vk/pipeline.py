@@ -5,8 +5,8 @@ import json
 import logging
 import re
 import time
-from collections.abc import Callable, Collection
-from dataclasses import dataclass, replace
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel
@@ -14,8 +14,8 @@ from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.models import Model
 
 from vk import agents, git, memory, runlog
-from vk.approval import PREFIX, READS, Caller, Confirm
-from vk.clans import PROMPTS_DIR, run_clan
+from vk.approval import PREFIX, Caller, Confirm
+from vk.clans import load_prompt, run_clan
 from vk.config import Config
 from vk.github import GitHub, GitHubError, github_tools
 from vk.memory import Notebook
@@ -23,12 +23,12 @@ from vk.models import (
     Analysis,
     Classification,
     Implementation,
+    IssueTriage,
     PrBody,
     Research,
     Review,
-    Triage,
 )
-from vk.tooling import Tool, ToolError
+from vk.tooling import ToolError
 from vk.tools import load_skill, preference_tools
 
 log = logging.getLogger(__name__)
@@ -39,10 +39,7 @@ STATUS_LABELS = ("vk:in-progress", "vk:pr-open", "vk:needs-info", "vk:blocked")
 IN_PROGRESS, PR_OPEN, NEEDS_INFO, BLOCKED = STATUS_LABELS
 TRUSTED_ROLES = {"admin", "maintain", "write", "triage"}  # same bar as the workflow's check
 
-# Triage only reads issues and labels: repository code is for the clans, from their own clone.
-TRIAGE_TOOLS = frozenset(
-    {"searchIssues", "listIssues", "getIssueContext", "listIssueComments", "listLabels"}
-)
+PURPOSE_CHARS = 6000  # of AGENTS.md then README.md shown to the triager as the repo's purpose
 
 ModelFactory = Callable[[str], Model]
 
@@ -81,7 +78,9 @@ class Stages:
     remote_url: str | None = None
     notebook: Notebook | None = None  # the run's memory, attached to every agent
 
-    def clan[T: BaseModel](self, name: str, message: str, out: type[T]) -> T:
+    def clan[T: BaseModel](
+        self, name: str, message: str, out: type[T], *, branch: str | None = None
+    ) -> T:
         nb = self.notebook
         result = _attempt(
             name,
@@ -92,19 +91,15 @@ class Stages:
                 model=self.model,
                 remote_url=self.remote_url,
                 capabilities=nb.capabilities() if nb else (),
-                extra_instructions=nb.instructions if nb else "",
+                branch=branch,
             ),
         )
         if not isinstance(result, out):
             raise TypeError(f"clan {name} returned {type(result).__name__}, not {out.__name__}")
         return result
 
-    def agent[T](
-        self, name: str, out: type[T], instructions: str, message: str, tools: list[Tool]
-    ) -> T:
+    def agent[T](self, name: str, out: type[T], instructions: str, message: str) -> T:
         nb = self.notebook
-        if nb:
-            instructions = f"{instructions.rstrip()}\n\n{nb.instructions}\n"
         return _attempt(
             name,
             lambda: agents.run_typed(
@@ -112,15 +107,15 @@ class Stages:
                 out,
                 instructions,
                 message,
-                tools,
+                [],
                 self.cfg,
                 capabilities=nb.capabilities() if nb else (),
                 model=self.model(name) if self.model else None,
             ),
         )
 
-    def notebook_changes(self) -> dict[str, str | None]:
-        """Notebook files to commit with the run log (none without a notebook)."""
+    def notebook_changes(self) -> dict[str, str]:
+        """The notebook page to commit with the run log (none without a notebook)."""
         return self.notebook.changes() if self.notebook else {}
 
 
@@ -134,14 +129,6 @@ class Ops:
 
     def call(self, tool: str, /, **args: Any) -> Any:
         return self._tools[PREFIX + tool].fn(args)
-
-    def read_tools(self, only: Collection[str] | None = None) -> list[Tool]:
-        """The read-only GitHub tools, or just those named in `only`."""
-        return [
-            t
-            for t in self._tools.values()
-            if (name := t.name.removeprefix(PREFIX)) in READS and (only is None or name in only)
-        ]
 
     def trusted(self, login: str) -> bool:
         """Whether a login holds a role that may hand work to the factory; cached per run."""
@@ -180,32 +167,6 @@ class IssueOps(Ops):
             elif login == author or (login and self.trusted(login)):
                 kept.append(c)
         return kept, len(comments) - len(kept)
-
-    def read_tools(self, only: Collection[str] | None = None) -> list[Tool]:
-        """Read tools, with this issue's comments screened wherever an agent could fetch them."""
-        screened = {"getIssueContext", "listIssueComments"}
-        return [
-            replace(t, fn=self._screen(t)) if t.name.removeprefix(PREFIX) in screened else t
-            for t in super().read_tools(only)
-        ]
-
-    def _screen(self, tool: Tool) -> Callable[[dict[str, Any]], Any]:
-        def fn(args: dict[str, Any]) -> Any:
-            result = tool.fn(args)
-            if args.get("issue_number") != self.number:
-                return result
-            ctx = (
-                result
-                if isinstance(result, dict)
-                else self.call("getIssueContext", issue_number=self.number)
-            )
-            comments = ctx["comments"] if isinstance(result, dict) else result
-            kept, omitted = self.visible_comments(ctx, comments)
-            if isinstance(result, dict):
-                return {**result, "comments": kept, "omitted_comments": omitted}
-            return kept
-
-        return fn
 
     def comment(self, body: str) -> None:
         self.call("addIssueComment", issue_number=self.number, body=body)
@@ -280,7 +241,7 @@ def _issue_text(number: int, ctx: dict[str, Any], ops: IssueOps) -> str:
     return "\n".join(parts)
 
 
-def _artifact_line(kind: str, artifact_id: str | None) -> str:
+def artifact_line(kind: str, artifact_id: str | None) -> str:
     if not artifact_id:
         return ""
     return f"\n\n{kind} artifact id: {artifact_id} (open it with read_artifact before you start)."
@@ -292,10 +253,12 @@ def section(title: str, body: str) -> str:
 
 def agent_instructions(cfg: Config, name: str, *extra: str) -> str:
     """Agent prompt, then any extra text, then the shared writing style."""
-    parts = [(PROMPTS_DIR / f"{name}.md").read_text(encoding="utf-8").replace("{repo}", cfg.repo)]
-    parts += extra
-    parts.append((PROMPTS_DIR / "style.md").read_text(encoding="utf-8"))
+    parts = [load_prompt(name, repo=cfg.repo), *extra, load_prompt("style")]
     return "\n\n".join(p.strip() for p in parts) + "\n"
+
+
+def revision_section(branch: str) -> str:
+    return section("Revision requested", load_prompt("revision", branch=branch))
 
 
 def review_findings(review: Review) -> str:
@@ -379,12 +342,7 @@ def implement_and_review(
         revision = "\n\n".join(
             [
                 task,
-                section(
-                    "Revision requested",
-                    f"The work is already on branch `{impl.branch}`. Fetch it with "
-                    "checkout_branch, address every finding below (fix it, or record in "
-                    "`deviations` why it should stand), and push to the same branch.",
-                ),
+                revision_section(impl.branch),
                 section("Your previous implementation report", dump(impl)),
                 section("Reviewer findings", review_findings(review)),
             ]
@@ -392,10 +350,12 @@ def implement_and_review(
         impl = implement(revision)
 
 
-def load_notebook(cfg: Config, issue: int, ref: str, remote_url: str | None) -> Notebook:
+def load_notebook(
+    cfg: Config, issue: int, title: str, ref: str, remote_url: str | None
+) -> Notebook:
     """Materialize the run's memory from `ref`; a git failure ends the run as a stage failure."""
     try:
-        return memory.open_notebook(cfg, issue, ref, remote_url=remote_url)
+        return memory.open_notebook(cfg, issue, title, ref, remote_url=remote_url)
     except git.GitError as exc:
         raise StageFailed("memory", exc) from exc
 
@@ -409,11 +369,7 @@ def _preferences(cfg: Config, caller: Caller) -> str:
     )
     found = get.fn({})
     prefs = str(found.get("preferences", "")).strip()
-    return (
-        f"# This user's standing preferences\n\nApply these to the pull request:\n\n{prefs}"
-        if prefs
-        else ""
-    )
+    return load_prompt("preferences", preferences=prefs) if prefs else ""
 
 
 def _with_closes(body: str, number: int) -> str:
@@ -450,7 +406,7 @@ def run_issue(
     log.info("issue #%d starting repo=%s", number, cfg.repo)
 
     try:
-        notebook = load_notebook(cfg, number, "HEAD", remote_url)
+        notebook = load_notebook(cfg, number, ctx["issue"].get("title", ""), "HEAD", remote_url)
         try:
             stages = Stages(cfg, model, remote_url, notebook)
             summary = _run(cfg, ops, stages, caller, number, issue, on_issue)
@@ -467,6 +423,23 @@ def run_issue(
     return summary
 
 
+def _repo_purpose(ops: IssueOps) -> str:
+    """`AGENTS.md` then `README.md` from the default branch, cut at `PURPOSE_CHARS` in total."""
+    parts, left = [], PURPOSE_CHARS
+    for path in ("AGENTS.md", "README.md"):
+        if left <= 0:
+            break
+        try:
+            text = ops.call("getFileContent", path=path)["content"]
+        except GitHubError as exc:
+            if exc.status != 404:
+                raise
+            continue
+        parts.append(f"### {path}\n\n{text[:left].strip()}")
+        left -= len(text)
+    return "\n\n".join(parts) or "(the repository has neither file)"
+
+
 def _run(
     cfg: Config,
     ops: IssueOps,
@@ -476,16 +449,21 @@ def _run(
     issue: str,
     on_issue: set[str],
 ) -> str:
-    # 1. Triage: duplicates, labels, whether research is needed.
+    # 1. Triage: scope, duplicates, labels, whether research is needed.
     repo_labels = [label["name"] for label in ops.call("listLabels", per_page=100)]
     triage = stages.agent(
-        "triage",
-        Triage,
-        agent_instructions(cfg, "triage", load_skill("triaging-issues")),
-        f"{issue}\n\n## Existing labels\n\n" + ("\n".join(repo_labels) or "(none)"),
-        ops.read_tools(TRIAGE_TOOLS),
+        "triager",
+        IssueTriage,
+        agent_instructions(cfg, "triager", load_prompt("triager_issue")),
+        "\n\n".join(
+            [
+                issue,
+                section("Existing labels", "\n".join(repo_labels) or "(none)"),
+                section("Repository purpose", _repo_purpose(ops)),
+            ]
+        ),
     )
-    log.info("triage proceed=%s duplicate_of=%s", triage.proceed, triage.duplicate_of)
+    log.info("triager verdict=%s duplicate_of=%s", triage.verdict, triage.duplicate_of)
     # Code decides which labels apply: only ones the repo already has, never a status label.
     wanted = [
         label
@@ -496,7 +474,13 @@ def _run(
         ops.call("addLabels", issue_number=number, labels=wanted)
 
     dup = triage.duplicate_of
-    if dup is not None and dup != number and ops.issue_exists(dup):
+    # A duplicate number the repo does not have is not trusted: carry on.
+    if (
+        triage.verdict == "duplicate"
+        and dup is not None
+        and dup != number
+        and ops.issue_exists(dup)
+    ):
         ops.comment(
             f"This looks like a duplicate of #{dup}. {triage.reason}\n\n"
             "I'm not running the factory on it. If that's wrong, say so here and label the "
@@ -504,28 +488,27 @@ def _run(
         )
         ops.set_status(NEEDS_INFO)
         return f"Issue #{number} looks like a duplicate of #{dup}; I commented and stopped."
-    if not triage.proceed:
-        ops.comment(f"I'm not going to work on this one. {triage.reason}")
-        ops.set_status(BLOCKED)
-        return f"Triage decided not to proceed on #{number}: {triage.reason}"
-
-    # 2. Classify; stop for clarification.
-    classification = stages.clan("classifier", issue, Classification)
-    log.info(
-        "classification type=%s priority=%s complexity=%s needs_clarification=%s",
-        classification.type,
-        classification.priority,
-        classification.complexity,
-        classification.needs_clarification,
-    )
-    if classification.needs_clarification:
-        questions = "\n".join(f"- {q}" for q in classification.questions)
+    if triage.verdict == "clarify":
+        questions = "\n".join(f"- {q}" for q in triage.questions) or triage.reason
         ops.comment(
             "Thanks for the report. Before I start, I need a few answers:\n\n"
             f"{questions}\n\nReply here, then label the issue `vk` again and I'll pick it up."
         )
         ops.set_status(NEEDS_INFO)
         return f"Issue #{number} needs clarification; I posted my questions."
+    if triage.verdict == "decline":
+        ops.comment(f"I'm not going to work on this one. {triage.reason}")
+        ops.set_status(BLOCKED)
+        return f"Triage decided not to proceed on #{number}: {triage.reason}"
+
+    # 2. Classify (descriptive only: the triager already decided to go ahead).
+    classification = stages.clan("classifier", issue, Classification)
+    log.info(
+        "classification type=%s priority=%s complexity=%s",
+        classification.type,
+        classification.priority,
+        classification.complexity,
+    )
     c = classification
     ops.comment(
         f"Classified as {c.type} ({c.priority} priority, {c.complexity}) in {c.affected_area}. "
@@ -543,7 +526,7 @@ def _run(
         context.append(section("Research", dump(research)))
     analysis_message = "\n\n".join(context)
     if research:
-        analysis_message += _artifact_line("Research", research.artifact_id)
+        analysis_message += artifact_line("Research", research.artifact_id)
     analysis = stages.clan("analyst", analysis_message, Analysis)
     ops.comment(
         f"The plan is ready: {len(analysis.plan)} step(s), {len(analysis.acceptance_criteria)} "
@@ -552,7 +535,7 @@ def _run(
 
     # 4. Implement and review.
     plan = [*context, section("Analysis", dump(analysis))]
-    artifact = _artifact_line("Analysis", analysis.artifact_id)
+    artifact = artifact_line("Analysis", analysis.artifact_id)
     task = "\n\n".join(["Implement this work item.", *plan]) + artifact
     brief = "\n\n".join(["Review this work item.", *plan]) + artifact
     result = implement_and_review(stages, task, brief, progress=ops.comment)
@@ -605,7 +588,6 @@ def _run(
             cfg, "pr_writer", load_skill("writing-quality"), _preferences(cfg, caller)
         ),
         pr_message,
-        [],
     )
     if stages.notebook:  # the pr_writer has the notebook too, so keep what it wrote
         try:

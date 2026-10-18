@@ -424,12 +424,10 @@ def artifact_tools(cfg: Config, can_save: bool) -> list[Tool]:
         return [read_tool]
     save_tool = Tool(
         "save_artifact",
-        "Save a Markdown document for another clan to read, and get back an id to hand "
-        "along. Use for long supporting detail the next clan needs but that does not fit "
-        "your structured output: a full research memo, deep analysis notes with file-level "
-        "detail and code excerpts. After saving, report the id in your structured output with "
-        "a few lines on what's in it, never the document itself. Not for a note that fits in "
-        "a sentence.",
+        "Save a Markdown document for another clan to read; you get back an id to hand along. "
+        "Use it for long detail that does not fit your structured output (a memo, "
+        "analysis notes). Report the id with a few lines on what is in it, never the "
+        "document itself. Not for a note that fits in a sentence.",
         _schema(
             {
                 "kind": {"type": "string", "enum": list(ARTIFACT_KINDS)},

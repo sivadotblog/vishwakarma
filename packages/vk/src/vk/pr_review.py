@@ -8,9 +8,10 @@ from typing import Any, Literal
 
 from vk import runlog
 from vk.approval import Caller, Confirm
+from vk.clans import load_prompt
 from vk.config import Config
 from vk.github import GitHub, GitHubError
-from vk.models import CommentDecision, Implementation
+from vk.models import Analysis, Implementation, ItemTriage
 from vk.pipeline import (
     LoopResult,
     ModelFactory,
@@ -18,9 +19,12 @@ from vk.pipeline import (
     StageFailed,
     Stages,
     agent_instructions,
+    artifact_line,
+    dump,
     implement_and_review,
     load_notebook,
     review_findings,
+    revision_section,
     section,
 )
 from vk.tooling import ToolError
@@ -31,6 +35,7 @@ REPLY_MARKER = "<!-- vk:review-reply:{} -->"
 _REPLY_ID = re.compile(r"<!-- vk:review-reply:(\d+) -->")
 _CLOSES = re.compile(r"\bcloses\s+#(\d+)", re.IGNORECASE)
 UNSETTLED = "I couldn't settle on a response to this one, so a person should look at it."
+FIXES = ("fix_direct", "analyze")
 
 
 @dataclass(frozen=True)
@@ -53,7 +58,7 @@ class Item:
 
     @property
     def key(self) -> int:
-        """The id the decider sees and answers with: reviews are negated so they never collide."""
+        """The id the triager sees and answers with: reviews are negated so they never collide."""
         return self.id if self.kind == "inline" else -self.id
 
     @property
@@ -79,7 +84,7 @@ def _unanswered(ops: PrOps, ctx: dict[str, Any]) -> tuple[list[Item], list[Repea
     """Unanswered inline comments, then unanswered review bodies, from trusted people only.
 
     Anyone can comment on a public repo's PR, so words from other authors never reach an
-    agent. Returns the items for the decider, the repeats of an earlier item (answered by code,
+    agent. Returns the items for the triager, the repeats of an earlier item (answered by code,
     see `_split_repeats`), and how many comments were skipped as untrusted.
     """
     me = ops.gh.me()
@@ -181,21 +186,16 @@ def _files_text(files: list[dict[str, Any]]) -> str:
     )
 
 
-def _settle(
-    items: list[Item], decisions: list[CommentDecision]
-) -> dict[tuple[str, int], CommentDecision]:
-    """Exactly one decision per item: unknown ids and repeats dropped, gaps filled."""
+def _settle(items: list[Item], verdicts: list[ItemTriage]) -> dict[tuple[str, int], ItemTriage]:
+    """Exactly one verdict per item: unknown ids and repeats dropped, gaps filled."""
     by_key = {i.key: i for i in items}
-    settled: dict[tuple[str, int], CommentDecision] = {}
-    for d in decisions:
-        if d.comment_id in by_key:
-            settled.setdefault(by_key[d.comment_id].ref, d)
+    settled: dict[tuple[str, int], ItemTriage] = {}
+    for v in verdicts:
+        if v.item_id in by_key:
+            settled.setdefault(by_key[v.item_id].ref, v)
     for i in items:
         settled.setdefault(
-            i.ref,
-            CommentDecision(
-                comment_id=i.key, decision="wontfix", reason=UNSETTLED, fix_instructions=""
-            ),
+            i.ref, ItemTriage(item_id=i.key, verdict="skip", reason=UNSETTLED, instructions="")
         )
     return settled
 
@@ -205,8 +205,8 @@ def _changes(impl: Implementation, path: str | None) -> str:
     return "\n".join(f"- `{c.path}`: {c.change}" for c in entries) or "- (no per-file summary)"
 
 
-def _reply_text(item: Item, d: CommentDecision, loop: LoopResult | None, sha: str) -> str:
-    if d.decision == "wontfix" or loop is None:
+def _reply_text(item: Item, d: ItemTriage, loop: LoopResult | None, sha: str) -> str:
+    if d.verdict not in FIXES or loop is None:
         return d.reason
     if loop.approved:
         changes = _changes(loop.implementation, item.path)
@@ -272,7 +272,7 @@ def run_review(
     started = time.monotonic()
     log.info("review PR #%d starting items=%d", pr_number, len(items))
     try:
-        notebook = load_notebook(cfg, issue, head, remote_url)
+        notebook = load_notebook(cfg, issue, pr.get("title", ""), head, remote_url)
         try:
             stages = Stages(cfg, model, remote_url, notebook)
             summary = _handle(
@@ -309,10 +309,10 @@ def _handle(
         f"Head branch `{head}` at `{pr['head']['sha']}`, base `{base}`.",
         section("Run log", run_log),
     ]
-    decisions = stages.agent(
-        "decider",
-        list[CommentDecision],
-        agent_instructions(stages.cfg, "decider"),
+    verdicts = stages.agent(
+        "triager",
+        list[ItemTriage],
+        agent_instructions(stages.cfg, "triager", load_prompt("triager_review")),
         "\n\n".join(
             [
                 *context,
@@ -320,42 +320,58 @@ def _handle(
                 section("Unanswered items", "\n\n".join(_render_item(i) for i in items)),
             ]
         ),
-        [],
     )
-    decided = _settle(items, decisions)
-    fixes = [i for i in items if decided[i.ref].decision == "fix"]
-    log.info("decider fix=%d wontfix=%d", len(fixes), len(items) - len(fixes))
+    decided = _settle(items, verdicts)
+    fixes = [i for i in items if decided[i.ref].verdict in FIXES]
+    investigate = any(decided[i.ref].verdict == "analyze" for i in fixes)
+    log.info(
+        "triager fix=%d (analyze=%s) other=%d", len(fixes), investigate, len(items) - len(fixes)
+    )
 
     loop: LoopResult | None = None
     if fixes:
         wanted = section(
             "Review comments to fix",
             "\n\n".join(
-                f"{_render_item(i)}\n\nWhat to change: {decided[i.ref].fix_instructions}"
+                f"{_render_item(i)}\n\n"
+                + (
+                    "What to change: "
+                    if decided[i.ref].verdict == "fix_direct"
+                    else "Investigate: "
+                )
+                + decided[i.ref].instructions
                 for i in fixes
             ),
         )
+        plan = []
+        if investigate:  # the analyst reads the PR branch and plans every fix item together
+            analysis = stages.clan(
+                "analyst",
+                "\n\n".join(
+                    [
+                        f"Plan the fixes for the review comments on pull request #{ops.number}.",
+                        *context,
+                        wanted,
+                    ]
+                ),
+                Analysis,
+                branch=head,
+            )
+            plan = [
+                section("Analysis", dump(analysis))
+                + artifact_line("Analysis", analysis.artifact_id)
+            ]
         task = "\n\n".join(
             [
                 f"Revise pull request #{ops.number}: address each review comment below.",
                 *context,
                 wanted,
-                section(
-                    "Revision requested",
-                    f"The work is already on branch `{head}`. Fetch it with checkout_branch, "
-                    "fix every comment above (or record in `deviations` why one should stand), "
-                    "and push to the same branch.",
-                ),
+                *plan,
+                revision_section(head),
             ]
         )
         brief = "\n\n".join(
-            [
-                f"Review the changes made for pull request #{ops.number} in response to "
-                "review comments. Treat each comment below as a criterion: judge whether it "
-                "is addressed correctly and nothing else broke.",
-                *context,
-                wanted,
-            ]
+            [load_prompt("review_brief", number=str(ops.number)), *context, wanted, *plan]
         )
         loop = implement_and_review(stages, task, brief, branch=head)
     sha = ops.context()["pull_request"]["head"]["sha"]
@@ -381,7 +397,7 @@ def _handle(
         )
 
     notes = "\n".join(
-        f"- {i.label()}: {decided[i.ref].decision}. {' '.join(decided[i.ref].reason.split())}"
+        f"- {i.label()}: {decided[i.ref].verdict}. {' '.join(decided[i.ref].reason.split())}"
         for i in items
     ) + "".join(f"\n- {r.item.label()}: repeats {r.of.name}; answered there." for r in repeats)
     args: dict[str, Any] = {"issue_number": issue, "branch": head, "mode": "append", "notes": notes}

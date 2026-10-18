@@ -17,15 +17,6 @@ class Classification(_Model):
     affected_area: str = Field(
         description="Best guess at the component, service, or layer involved (e.g. 'frontend/auth', 'API', 'CI pipeline', 'unknown')."
     )
-    actionable: bool = Field(
-        description="Whether the request contains enough information to act on."
-    )
-    needs_clarification: bool = Field(
-        description="True when the request is ambiguous, contradictory, or missing essential details; the questions to ask go in `questions`."
-    )
-    questions: list[str] = Field(
-        description="The specific clarifying questions to ask; empty unless needs_clarification is true."
-    )
     summary: str = Field(description="One-sentence restatement of the work item.")
 
 
@@ -149,15 +140,20 @@ class Review(_Model):
     summary: str = Field(description="One paragraph: the verdict and what drove it.")
 
 
-class Triage(_Model):
-    proceed: bool = Field(description="Whether VK should work on this issue at all.")
-    duplicate_of: int | None = Field(
-        description="Number of the existing issue this duplicates, or null when it is not a duplicate."
+class IssueTriage(_Model):
+    verdict: Literal["proceed", "clarify", "decline", "duplicate"]
+    reason: str = Field(
+        description="Why, in one or two plain sentences a person reading the issue thread would understand."
     )
-    labels: list[str] = Field(description="Labels to apply to the issue.")
-    reason: str = Field(description="Why this decision was made, in one or two sentences.")
+    questions: list[str] = Field(
+        description="The specific questions to ask the reporter; empty unless the verdict is clarify."
+    )
+    duplicate_of: int | None = Field(
+        description="Number of the existing issue this duplicates; null unless the verdict is duplicate."
+    )
+    labels: list[str] = Field(description="Labels to apply to the issue, from the repo's own list.")
     needs_research: bool = Field(
-        description="True when the work turns on a fact the repository and its issues do not hold."
+        description="True when the work turns on a fact the repository and its notes do not hold."
     )
     research_question: str = Field(
         default="",
@@ -165,12 +161,14 @@ class Triage(_Model):
     )
 
 
-class CommentDecision(_Model):
-    comment_id: int = Field(description="Id of the review comment this decision answers.")
-    decision: Literal["fix", "wontfix"]
-    reason: str = Field(description="Why the comment is being fixed or declined.")
-    fix_instructions: str = Field(
-        description="What the implementer must change; empty when the decision is wontfix."
+class ItemTriage(_Model):
+    item_id: int = Field(description="Id of the review item this verdict answers, sign included.")
+    verdict: Literal["skip", "clarify", "decline", "fix_direct", "analyze"]
+    reason: str = Field(
+        description="Posted as the reply for skip, clarify and decline (for clarify it is the question); for a fix verdict, why the comment is right."
+    )
+    instructions: str = Field(
+        description="For fix_direct, what the implementer must change; for analyze, what to investigate; empty otherwise."
     )
 
 

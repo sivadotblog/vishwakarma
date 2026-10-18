@@ -23,6 +23,7 @@ from vk.pipeline import (
     implement_and_review,
     load_notebook,
     review_findings,
+    revision_section,
     section,
 )
 
@@ -79,8 +80,12 @@ def run_ci_fix(
     log.info("ci-fix PR #%d attempt %d", pr_number, attempts + 1)
     try:
         closes = _CLOSES.search(pr.get("body") or "")
-        # Memory is per issue, so a PR that names none runs without it.
-        notebook = load_notebook(cfg, int(closes.group(1)), head, remote_url) if closes else None
+        # A page belongs to an issue, so a PR that names none runs without memory.
+        notebook = (
+            load_notebook(cfg, int(closes.group(1)), pr.get("title", ""), head, remote_url)
+            if closes
+            else None
+        )
         try:
             stages = Stages(cfg, model, remote_url, notebook)
             summary = _attempt(cfg, ops, stages, pr, failure, head, base)
@@ -116,7 +121,6 @@ def _attempt(
         CiDiagnosis,
         agent_instructions(cfg, "ci_diagnoser"),
         "\n\n".join([*context, section("Failed checks", json.dumps(failure, indent=2))]),
-        [],
     )
     first_line = (diagnosis.summary.strip().splitlines() or [""])[0]
     log.info("ci diagnosis: %s", first_line[:120])
@@ -126,12 +130,7 @@ def _attempt(
             f"Fix the failing CI on pull request #{ops.number}.",
             *context,
             findings,
-            section(
-                "Revision requested",
-                f"The work is already on branch `{head}`. Fetch it with checkout_branch, make "
-                "the checks pass, run the repository's own checks to confirm, and push to the "
-                "same branch. Do not open a new pull request.",
-            ),
+            revision_section(head),
         ]
     )
     brief = "\n\n".join(
