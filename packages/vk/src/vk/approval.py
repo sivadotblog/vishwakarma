@@ -97,6 +97,7 @@ READS = {
     "listCheckRuns",
     "getCiFailureContext",
     "listReviewComments",
+    "getCollaboratorPermission",
 }
 
 

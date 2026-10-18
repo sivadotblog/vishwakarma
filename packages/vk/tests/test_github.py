@@ -101,6 +101,7 @@ def test_review_comments_answered() -> None:
     answered = {c["id"]: c["answered"] for c in out}
     assert answered == {1: True, 2: True, 3: False, 4: True, 5: True, 6: False}
     assert out[0]["user"] == "alice" and out[0]["line"] == 3
+    assert out[0]["user_type"] is None  # the fake comments carry no account type
 
 
 def _bot_tools(comments: list[dict[str, Any]]) -> dict[str, Tool]:
@@ -209,3 +210,17 @@ def test_ci_failure_context_collects_failed_runs() -> None:
     assert [r["name"] for r in out["failed_check_runs"]] == ["lint"]
     assert out["failed_check_runs"][0]["log_tail"].endswith("TAIL")
     assert len(out["failed_check_runs"][0]["log_tail"]) == 4000
+
+
+def test_collaborator_permission_reports_the_role_and_treats_404_as_none() -> None:
+    session = FakeSession(
+        {
+            ("GET", "/repos/o/r/collaborators/alice/permission"): FakeResponse(
+                200, {"role_name": "triage", "permission": "read"}
+            )
+        }
+    )
+    get = tools(session)["github__getCollaboratorPermission"].fn
+
+    assert get({"username": "alice"}) == {"login": "alice", "role_name": "triage"}
+    assert get({"username": "mallory"}) == {"login": "mallory", "role_name": "none"}

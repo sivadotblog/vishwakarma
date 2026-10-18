@@ -3,6 +3,7 @@
 import logging
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -29,6 +30,7 @@ log = logging.getLogger(__name__)
 REPLY_MARKER = "<!-- vk:review-reply:{} -->"
 _REPLY_ID = re.compile(r"<!-- vk:review-reply:(\d+) -->")
 _CLOSES = re.compile(r"\bcloses\s+#(\d+)", re.IGNORECASE)
+TRUSTED_ROLES = {"admin", "maintain", "write", "triage"}  # same bar as the workflow's check
 UNSETTLED = "I couldn't settle on a response to this one, so a person should look at it."
 
 
@@ -44,6 +46,16 @@ class Item:
     line: int | None = None
     thread: str = ""
 
+    @property
+    def ref(self) -> tuple[str, int]:
+        """Unique across kinds: GitHub's inline comment ids and review ids are separate spaces."""
+        return (self.kind, self.id)
+
+    @property
+    def key(self) -> int:
+        """The id the decider sees and answers with: reviews are negated so they never collide."""
+        return self.id if self.kind == "inline" else -self.id
+
     def label(self) -> str:
         if self.kind == "review":
             return f"Review {self.id} by @{self.author}"
@@ -51,8 +63,39 @@ class Item:
         return f"Comment {self.id}{where} by @{self.author}"
 
 
-def _unanswered(ops: PrOps, ctx: dict[str, Any]) -> list[Item]:
-    """Inline comments with no VK reply, then review bodies VK has not answered."""
+def _trust_check(ops: PrOps) -> Callable[[str], bool]:
+    """Whether a login holds a role that may hand work to the factory; cached for the run."""
+    cache: dict[str, bool] = {}
+
+    def trusted(login: str) -> bool:
+        if login not in cache:
+            role = ops.call("getCollaboratorPermission", username=login)["role_name"]
+            cache[login] = role in TRUSTED_ROLES
+        return cache[login]
+
+    return trusted
+
+
+def _unanswered(ops: PrOps, ctx: dict[str, Any]) -> tuple[list[Item], int]:
+    """Unanswered inline comments, then unanswered review bodies, from trusted people only.
+
+    Anyone can comment on a public repo's PR, so words from other authors never reach an
+    agent. Returns the items and how many were skipped for that reason.
+    """
+    me = ops.gh.me()
+    trusted = _trust_check(ops)
+    skipped = 0
+
+    def allowed(login: str, user_type: str | None, what: str) -> bool:
+        nonlocal skipped
+        if user_type == "Bot" or login == me:
+            return False
+        if trusted(login):
+            return True
+        log.info("ignoring %s: @%s is not a trusted collaborator", what, login)
+        skipped += 1
+        return False
+
     raw = ops.call("listReviewComments", pull_number=ops.number)
     threads: dict[int, list[dict[str, Any]]] = {}
     for c in raw:
@@ -61,8 +104,15 @@ def _unanswered(ops: PrOps, ctx: dict[str, Any]) -> list[Item]:
     for c in raw:
         if c["answered"]:
             continue
+        if not allowed(c["user"], c.get("user_type"), f"comment {c['id']}"):
+            continue
         root = int(c.get("in_reply_to_id") or c["id"])
-        earlier = [f"@{t['user']}: {t['body']}" for t in threads[root] if t["id"] != c["id"]]
+        earlier = [  # the thread is context for the agents too, so it gets the same filter
+            f"@{t['user']}: {t['body']}"
+            for t in threads[root]
+            if t["id"] != c["id"]
+            and (t["user"] == me or (t.get("user_type") != "Bot" and trusted(t["user"])))
+        ]
         items.append(
             Item(
                 c["id"],
@@ -75,26 +125,20 @@ def _unanswered(ops: PrOps, ctx: dict[str, Any]) -> list[Item]:
             )
         )
 
-    me = ops.gh.me()
     answered = {int(i) for body in ops.my_comments(ctx) for i in _REPLY_ID.findall(body)}
     for r in ctx["reviews"]:
         user = r.get("user") or {}
         body = (r.get("body") or "").strip()
-        if (
-            not body
-            or r.get("state") == "APPROVED"
-            or user.get("type") == "Bot"
-            or user.get("login") == me
-            or r["id"] in answered
-        ):
+        if not body or r.get("state") == "APPROVED" or r["id"] in answered:
             continue
-        items.append(Item(r["id"], "review", user.get("login", "unknown"), body))
-    return items
+        if allowed(user.get("login", "unknown"), user.get("type"), f"review {r['id']}"):
+            items.append(Item(r["id"], "review", user["login"], body))
+    return items, skipped
 
 
 def _render_item(item: Item) -> str:
     kind = "inline comment" if item.kind == "inline" else "review body"
-    lines = [f"### Item {item.id}: {kind} by @{item.author}"]
+    lines = [f"### Item {item.key}: {kind} by @{item.author}"]
     if item.path:
         lines.append(f"File: {item.path}" + (f", line {item.line}" if item.line else ""))
     lines += ["", item.body]
@@ -114,18 +158,20 @@ def _files_text(files: list[dict[str, Any]]) -> str:
     )
 
 
-def _settle(items: list[Item], decisions: list[CommentDecision]) -> dict[int, CommentDecision]:
+def _settle(
+    items: list[Item], decisions: list[CommentDecision]
+) -> dict[tuple[str, int], CommentDecision]:
     """Exactly one decision per item: unknown ids and repeats dropped, gaps filled."""
-    known = {i.id for i in items}
-    settled: dict[int, CommentDecision] = {}
+    by_key = {i.key: i for i in items}
+    settled: dict[tuple[str, int], CommentDecision] = {}
     for d in decisions:
-        if d.comment_id in known:
-            settled.setdefault(d.comment_id, d)
+        if d.comment_id in by_key:
+            settled.setdefault(by_key[d.comment_id].ref, d)
     for i in items:
         settled.setdefault(
-            i.id,
+            i.ref,
             CommentDecision(
-                comment_id=i.id, decision="wontfix", reason=UNSETTLED, fix_instructions=""
+                comment_id=i.key, decision="wontfix", reason=UNSETTLED, fix_instructions=""
             ),
         )
     return settled
@@ -180,9 +226,10 @@ def run_review(
     """
     ops = PrOps(gh, caller, confirm, pr_number)
     ctx = ops.context()
-    items = _unanswered(ops, ctx)
+    items, skipped = _unanswered(ops, ctx)
+    ignored = f" Ignored {skipped} from untrusted authors." if skipped else ""
     if not items:
-        return f"No unanswered review comments on PR #{pr_number}; nothing to do."
+        return f"No unanswered review comments on PR #{pr_number}; nothing to do.{ignored}"
     pr = ctx["pull_request"]
     match = _CLOSES.search(pr.get("body") or "")
     if not match:
@@ -204,6 +251,7 @@ def run_review(
     log.info("review PR #%d starting items=%d", pr_number, len(items))
     try:
         summary = _handle(cfg, ops, stages, pr, issue, items, log_file["content"], head, base)
+        summary += ignored
     except StageFailed as exc:
         ops.comment(
             f"I hit an error in the {exc.stage} step and stopped, so the review comments above "
@@ -245,14 +293,14 @@ def _handle(
         ops.read_tools(),
     )
     decided = _settle(items, decisions)
-    fixes = [i for i in items if decided[i.id].decision == "fix"]
+    fixes = [i for i in items if decided[i.ref].decision == "fix"]
 
     loop: LoopResult | None = None
     if fixes:
         wanted = section(
             "Review comments to fix",
             "\n\n".join(
-                f"{_render_item(i)}\n\nWhat to change: {decided[i.id].fix_instructions}"
+                f"{_render_item(i)}\n\nWhat to change: {decided[i.ref].fix_instructions}"
                 for i in fixes
             ),
         )
@@ -283,7 +331,7 @@ def _handle(
 
     failed = 0
     for item in items:
-        if not _post_reply(ops, item, _reply_text(item, decided[item.id], loop, sha)):
+        if not _post_reply(ops, item, _reply_text(item, decided[item.ref], loop, sha)):
             failed += 1
     if loop and not loop.approved:
         ops.comment(
@@ -294,7 +342,7 @@ def _handle(
         )
 
     notes = "\n".join(
-        f"- {i.label()}: {decided[i.id].decision}. {' '.join(decided[i.id].reason.split())}"
+        f"- {i.label()}: {decided[i.ref].decision}. {' '.join(decided[i.ref].reason.split())}"
         for i in items
     )
     args: dict[str, Any] = {"issue_number": issue, "branch": head, "mode": "append", "notes": notes}
