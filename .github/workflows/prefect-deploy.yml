@@ -1,0 +1,38 @@
+name: Deploy VK flows to Prefect
+
+# Registers the vk-issue and vk-review deployments on the managed vk-agents pool from
+# packages/vk/prefect_flows/prefect.yaml. Pushes to main deploy `<flow>/main`; running it by
+# hand on another branch deploys `<flow>/<branch-slug>` for testing. See packages/vk/README.md.
+
+on:
+  push:
+    branches: [main]
+    paths: [packages/vk/prefect_flows/**, uv.lock, .github/workflows/prefect-deploy.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prefect-deploy-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      PREFECT_API_URL: https://api.prefect.cloud/api/accounts/e861a32c-182b-46fd-9e1c-d8ad40b9f903/workspaces/2fd4b32d-fb16-4dcf-afa7-139fb725d830
+      PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Name the deployments after the branch
+        run: |
+          slug=$(printf '%s' "$GITHUB_REF_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g')
+          echo "VK_BRANCH=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
+          echo "VK_DEPLOYMENT=$slug" >> "$GITHUB_ENV"
+
+      - uses: PrefectHQ/actions-prefect-deploy@v4
+        with:
+          deployment-file-path: packages/vk/prefect_flows/prefect.yaml
+          all-deployments: "true"

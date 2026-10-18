@@ -1,0 +1,6 @@
+- Issue #33 triage: Adding a "Why the name Vishwakarma" section to apps/web/src/content/docs/index.mdx in Simplified Technical English (ASD-STE100).
+- Completed ASD-STE100 analysis for Vishwakarma name section in `apps/web/src/content/docs/index.mdx`.
+- Prettier and Astro build checks verified working with `make check` after `make setup`.
+- Implemented the "Why the name Vishwakarma" section on apps/web/src/content/docs/index.mdx in ASD-STE100 active-voice Simplified Technical English.
+- Formatted with Prettier and verified `make check` passes cleanly.
+- Reviewing branch vk/feature-explain-vishwakarma-name. Verified git diff, sentence compliance (6 active voice STE sentences), preservation of index.mdx, and clean build via `make check`.

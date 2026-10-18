@@ -7,17 +7,17 @@ This worked example demonstrates how Vishwakarma processes a real task based on 
 
 ## Overview of Issue #12
 
-Issue #12 requested replacing a template placeholder documentation page (`apps/web/src/content/docs/reference/example.md`) with a reference page for Vishwakarma status labels (`apps/web/src/content/docs/reference/status-labels.md`).
+Issue #12 requested a new reference page for Vishwakarma status labels (`apps/web/src/content/docs/reference/status-labels.md`) to replace a placeholder page (`apps/web/src/content/docs/reference/example.md`).
 
 ---
 
-## Stage 1: Intake & Triage
+## Stage 1: Intake and Triage
 
-An engineer labels Issue #12 with `vk`. The GitHub Actions workflow triggers, verifies permission, and starts `vk issue 12`.
+An engineer labels Issue #12 with `vk`. The GitHub Actions workflow starts, verifies permission, and runs `vk issue 12`.
 
 ---
 
-## Stage 2: Classification & Planning
+## Stage 2: Classification and Plan
 
 ### Classification
 
@@ -28,20 +28,20 @@ The Classifier clan analyzes the issue description and produces:
 - **Complexity**: `small`
 - **Affected Area**: `apps/web`
 
-### Analysis & Acceptance Criteria
+### Analysis and Acceptance Criteria
 
 The Analyst clan creates a step-by-step plan and explicit acceptance criteria:
 
 1. Delete `apps/web/src/content/docs/reference/example.md`.
-2. Create `apps/web/src/content/docs/reference/status-labels.md` documenting `vk:in-progress`, `vk:pr-open`, `vk:needs-info`, and `vk:blocked`.
+2. Create `apps/web/src/content/docs/reference/status-labels.md` with details for `vk:in-progress`, `vk:pr-open`, `vk:needs-info`, and `vk:blocked`.
 3. Format markdown files with Prettier.
-4. Run `make check` to verify linting, typechecking, and static build.
+4. Run `make check` to verify lint, type check, and static build.
 
 ---
 
-## Stage 3: Implementation & Verification
+## Stage 3: Implementation and Verification
 
-The Implementer clan checks out branch `vk/docs-status-labels-reference` and performs surgical edits:
+The Implementer clan creates branch `vk/docs-status-labels-reference` and makes small, exact edits:
 
 ```bash
 # File operations
@@ -53,13 +53,13 @@ rm apps/web/src/content/docs/reference/example.md
 
 The Implementer clan executes `make check` from the repository root:
 
-- Python linting (`ruff`), strict typechecking (`mypy`), and pytest unit tests pass.
-- Web workspace checks (Prettier formatting, `astro check`, `astro build`) succeed.
-- Static output route `/reference/status-labels/index.html` is successfully generated.
+- Python lint checks (`ruff`), strict type check (`mypy`), and pytest unit tests pass.
+- Web workspace checks (Prettier format check, `astro check`, `astro build`) succeed.
+- The build generates static route `/reference/status-labels/index.html`.
 
 ---
 
-## Stage 4: Review & PR Publication
+## Stage 4: Review and PR Publication
 
 The Reviewer clan audits the changes against each acceptance criterion:
 
@@ -70,4 +70,4 @@ The Reviewer clan audits the changes against each acceptance criterion:
 
 **Verdict**: `approve`
 
-Vishwakarma commits the run log to `docs/factory/issue-12.md` on branch `vk/docs-status-labels-reference`, pushes the branch, and opens a draft pull request referencing `Closes #12`.
+Vishwakarma commits the run log to `docs/factory/issue-12.md` on branch `vk/docs-status-labels-reference`. Then it pushes the branch and opens a draft pull request with `Closes #12`.

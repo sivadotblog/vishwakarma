@@ -18,6 +18,7 @@ from vk.pipeline import (
     PrOps,
     StageFailed,
     Stages,
+    StageWrapper,
     agent_instructions,
     artifact_line,
     dump,
@@ -241,11 +242,13 @@ def run_review(
     confirm: Confirm | None = None,
     model: ModelFactory | None = None,
     remote_url: str | None = None,
+    stage_wrapper: StageWrapper | None = None,
 ) -> str:
     """Answer every unanswered review comment on factory PR `pr_number`; returns a summary.
 
     A run with nothing unanswered makes no model call and posts nothing. `model` and
     `remote_url` are test seams.
+    `stage_wrapper` runs each stage, for example as a Prefect task.
     """
     ops = PrOps(gh, caller, confirm, pr_number)
     ctx = ops.context()
@@ -274,7 +277,7 @@ def run_review(
     try:
         notebook = load_notebook(cfg, issue, pr.get("title", ""), head, remote_url)
         try:
-            stages = Stages(cfg, model, remote_url, notebook)
+            stages = Stages(cfg, model, remote_url, notebook, stage_wrapper)
             summary = _handle(
                 cfg, ops, stages, pr, issue, items, repeats, log_file["content"], head, base
             )

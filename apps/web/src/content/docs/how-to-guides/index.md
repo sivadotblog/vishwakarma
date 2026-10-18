@@ -1,31 +1,33 @@
 ---
 title: How-to Guides
-description: Task-focused operational guides for working with Vishwakarma.
+description: Task-focused guides for Vishwakarma.
 ---
 
-This section provides step-by-step guides for common tasks when operating Vishwakarma.
+This section provides step-by-step guides for common tasks when you operate Vishwakarma.
 
 ## How to Hand an Issue to VK
 
-To hand an issue to Vishwakarma for processing:
+To hand an issue to Vishwakarma:
 
-1. Open a GitHub issue describing the bug, feature, or maintenance task.
+1. Open a GitHub issue that describes the bug, feature, or maintenance task.
 2. Add the label `vk` to the issue.
-3. The `.github/workflows/vishwakarma.yml` workflow triggers automatically.
-4. **Permission check**: Vishwakarma verifies that the user who attached the label holds at least `triage`, `write`, `maintain`, or `admin` repository permission. If an unauthorized user labels an issue, execution stops to prevent unauthorized resource usage.
+3. The `.github/workflows/vishwakarma.yml` workflow starts automatically.
+4. **Permission check**: Vishwakarma verifies that the labeler holds at least `triage`, `write`, `maintain`, or `admin` repository permission. If an unauthorized user labels an issue, execution stops to prevent unauthorized resource usage.
 
 ## How to Respond to a VK Pull Request
 
 When Vishwakarma opens a draft pull request:
 
-1. Review the changes and the run log committed at `docs/factory/issue-<N>.md`.
-2. If changes are requested, leave review comments directly on the pull request.
-3. Trigger the review cycle by running `vk review <PR_NUMBER>` (or through configured workflow triggers).
-4. Vishwakarma checks out the existing PR branch, reads review comments, addresses each finding, updates `docs/factory/issue-<N>.md` with review rounds, and pushes updated commits.
+1. Review the changes and the run log in `docs/factory/issue-<N>.md`.
+2. If you request changes, write review comments on the pull request.
+3. Submit the review. The `.github/workflows/vishwakarma-review.yml` workflow starts the review cycle.
+4. To start the review cycle locally, run `vk review <PR_NUMBER>`.
+5. Vishwakarma checks out the PR branch, reads the review comments, and answers each comment.
+6. Vishwakarma updates `docs/factory/issue-<N>.md` with review rounds and pushes updated commits.
 
 ## How to Change the LLM Model Used by VK
 
-Vishwakarma uses PydanticAI, allowing integration with model providers like Anthropic, OpenAI, and Gemini.
+Vishwakarma uses PydanticAI to integrate with model providers such as Anthropic, OpenAI, and Gemini.
 
 ### Default Model Configuration
 
@@ -44,7 +46,7 @@ env:
 
 ### Per-Clan Model Overrides
 
-You can assign specific models to individual clans using per-clan environment variables:
+You can assign specific models to individual clans with per-clan environment variables:
 
 - `VK_MODEL_CLASSIFIER`
 - `VK_MODEL_RESEARCHER`
@@ -55,7 +57,7 @@ You can assign specific models to individual clans using per-clan environment va
 - `VK_MODEL_PR_WRITER`
 - `VK_MODEL_CI_DIAGNOSER`
 
-Example using a lighter model for classification and a larger model for implementation:
+This example sets a small model for classification and a large model for implementation:
 
 ```bash
 export VK_MODEL_CLASSIFIER="google:gemini-2.5-flash"

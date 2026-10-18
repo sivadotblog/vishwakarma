@@ -1,0 +1,11 @@
+- Issue #23: Document rewrite in STE (ASD-STE100) covers 11 files under `apps/web/src/content/docs/`.
+- Strict STE rules: max 20 words procedural, max 25 words descriptive, no `-ing` gerunds/adjectives, no phrasal verbs, simple tenses, active voice.
+- Code blocks, inline code, paths, labels, link targets, and MDX component props must remain untouched.
+- `make check` (including Prettier and Astro build) is the definition of done.
+- Issue #23: Document rewrite in STE (ASD-STE100) completed for 11 files under `apps/web/src/content/docs/`.
+- Applied STE rules: sentence word limits (<=20 procedural, <=25 descriptive), eliminated gerunds/participial adjectives (-ing forms), phrasal verbs, and passive voice constructions.
+- Preserved code blocks, inline code, paths, labels, link targets, and MDX component props.
+- `make check` passed cleanly.
+- Decision on PR #24 review body (-5562999721): fix. Accepted 5 feedback points (restoring facts, sidebar alignment, using 'hand' instead of 'transfer', STE vocabulary updates, and verification).
+- Revised PR #24 according to review comments: restored accurate facts (how-to-guides steps, api-reference exit code 2 and vk issue description), aligned sidebar labels ("Getting Started"), used "hand" instead of "transfer" across all doc pages, updated non-STE vocabulary terms, and verified with `make check`.
+- Verified review comments fix in PR #24 (branch `vk/refactor-ste-docs`): all 5 review comment items addressed correctly, `make check` passes cleanly, no facts altered, STE rules maintained.
