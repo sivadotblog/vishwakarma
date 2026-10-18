@@ -3,7 +3,16 @@
 from pathlib import Path
 
 from vk.config import Config
-from vk.memory import BRAIN_BUDGET, MAX_FILES, TRUNCATED, Notebook, _brain, folder, open_notebook
+from vk.memory import (
+    BRAIN_BUDGET,
+    MAX_FILES,
+    RESTORED,
+    TRUNCATED,
+    Notebook,
+    _brain,
+    folder,
+    open_notebook,
+)
 
 from .helpers import (
     BRANCH,
@@ -247,3 +256,58 @@ def test_a_runaway_notebook_is_capped(tmp_path: Path) -> None:
         (home / f"n{n:03}.md").write_text("x")
 
     assert len(nb.changes()) == MAX_FILES
+
+
+def started(tmp_path: Path, name: str, before: str, after: str | None) -> Notebook:
+    """A notebook that started with `before` in `name` and now holds `after` (None = deleted)."""
+    nb = Notebook(7, tmp_path, "", {f"{folder(7)}/{name}": before})
+    (tmp_path / "issue-7").mkdir()
+    if after is not None:
+        (tmp_path / "issue-7" / name).write_text(after)
+    return nb
+
+
+def test_a_rewrite_that_drops_lines_gets_them_restored(tmp_path: Path) -> None:
+    before = "## Round 0\n- first note\n\n- second note\n"
+    nb = started(tmp_path, "MEMORY.md", before, "## Round 1\n- fresh note\n")
+
+    got = nb.changes()[f"{folder(7)}/MEMORY.md"]
+
+    assert got == (
+        f"## Round 1\n- fresh note\n\n{RESTORED}\n\n## Round 0\n- first note\n- second note\n"
+    )
+    nb.mark_saved()
+    assert nb.changes() == {}  # the restored text is what counts as committed
+
+
+def test_deleting_a_log_restores_all_of_it(tmp_path: Path) -> None:
+    nb = started(tmp_path, "repo-notes.md", "- a\n- b\n", None)
+
+    assert nb.changes() == {f"{folder(7)}/repo-notes.md": f"{RESTORED}\n\n- a\n- b\n"}
+
+
+def test_a_pure_append_is_committed_unchanged(tmp_path: Path) -> None:
+    nb = started(tmp_path, "MEMORY.md", "- a\n", "- a\n- b\n")
+
+    assert nb.changes() == {f"{folder(7)}/MEMORY.md": "- a\n- b\n"}
+
+
+def test_correcting_one_line_also_restores_the_old_line(tmp_path: Path) -> None:
+    # Accepted trade-off: the guard cannot tell a correction from a drop, so the wrong line
+    # comes back under the heading and a reviewer prunes it.
+    nb = started(tmp_path, "MEMORY.md", "- keep\n- wrong\n", "- keep\n- right\n")
+
+    assert nb.changes() == {f"{folder(7)}/MEMORY.md": f"- keep\n- right\n\n{RESTORED}\n\n- wrong\n"}
+
+
+def test_other_topic_files_are_not_guarded(tmp_path: Path) -> None:
+    nb = started(tmp_path, "topic.md", "- a\n- b\n", "- c\n")
+
+    assert nb.changes() == {f"{folder(7)}/topic.md": "- c\n"}
+
+
+def test_guidance_tells_agents_to_append_and_keep_earlier_entries() -> None:
+    text = Notebook(7, Path("."), "").instructions
+
+    assert "`repo-notes.md`" in text and "{" not in text
+    assert "without `old_text`" in text and "Never remove or rewrite earlier" in text
