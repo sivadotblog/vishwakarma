@@ -10,7 +10,7 @@ Monorepo demonstrating a fully autonomous development lifecycle: issue → triag
 | `apps/api`          | Python backend (`src/` layout, package `api`)            | uv workspace, ruff, mypy `--strict`, pytest |
 | `packages/vk` | Vishwakarma (VK), the software factory (issue → PR → review-fix), PydanticAI + requests | uv workspace, ruff, mypy `--strict`, pytest |
 
-**Vishwakarma**, or **VK**, is this repo's software factory. Labeling a GitHub issue `vk` triggers `.github/workflows/vishwakarma.yml`, which runs VK on it and opens a draft PR from a `vk/*` branch. "Hand it to VK" means label the issue `vk`.
+**Vishwakarma**, or **VK**, is this repo's software factory. VK runs on demand as Prefect flows (`vk-issue`, `vk-review`) on the `vk-agents` pool; see `packages/vk/README.md`. Running `vk-issue` on an issue opens a draft PR from a `vk/*` branch. The `vk` label no longer triggers anything. "Hand it to VK" means start the `vk-issue` deployment for the issue.
 
 ### Commands (run from repo root)
 
