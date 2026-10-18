@@ -163,10 +163,8 @@ def implementer_turns(*first: tuple[str, dict[str, Any]], prefix: str = "") -> l
         prefix
         + "echo fixed >> fix.txt && git add -A && git commit -qm fix; git branch --show-current"
     )
-    # One call per turn: PydanticAI runs a turn's tool calls concurrently, and these are ordered.
     return [
-        *([call] for call in first),
-        [("bash", {"command": commit})],
+        [*first, ("bash", {"command": commit})],
         [("push_branch", {"branch": BRANCH})],
         [("submit", IMPL)],
     ]

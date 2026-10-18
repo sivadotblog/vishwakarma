@@ -1,5 +1,6 @@
 """Tests for the PydanticAI runtime, driven by `FunctionModel` (no network)."""
 
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -136,3 +137,28 @@ def test_plain_text_output() -> None:
         return ModelResponse(parts=[TextPart("final answer")])
 
     assert run(FunctionModel(fn), [], output_type=str) == "final answer"
+
+
+def test_tool_calls_in_one_turn_run_in_order_without_overlap() -> None:
+    events: list[str] = []
+
+    def slow(_: dict[str, Any]) -> str:
+        events.append("a start")
+        time.sleep(0.05)
+        events.append("a end")
+        return "a"
+
+    def quick(_: dict[str, Any]) -> str:
+        events.append("b start")
+        events.append("b end")
+        return "b"
+
+    tools = [Tool("a", "a", {"type": "object"}, slow), Tool("b", "b", {"type": "object"}, quick)]
+
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if not tool_returns(messages):
+            return ModelResponse(parts=[ToolCallPart("a", {}), ToolCallPart("b", {})])
+        return final(info, {"verdict": "ok", "note": None})
+
+    assert run(FunctionModel(fn), tools).verdict == "ok"
+    assert events == ["a start", "a end", "b start", "b end"]

@@ -37,6 +37,8 @@ def adapt(tool: Tool) -> AiTool[None]:
         description=tool.description,
         json_schema=tool.parameters,
         takes_ctx=False,
+        # Tools share one clone, so keep the old in-order semantics: never run calls concurrently.
+        sequential=True,
     )
 
 
