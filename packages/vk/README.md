@@ -148,7 +148,8 @@ branch, with `/` and capitals slugified. GitHub only offers that once the workfl
 until then, deploy from your machine with the same file:
 `VK_BRANCH=<branch> VK_DEPLOYMENT=<slug> uv run prefect --no-prompt deploy --all --prefect-file packages/vk/prefect_flows/prefect.yaml`.
 Before each run, the pull steps in `prefect.yaml` clone
-that branch, `pip install uv` and run `uv sync --locked`. The flow then activates that venv
+that branch, `pip install uv`, install Node 22 with
+`uv tool install nodejs-wheel` and run `uv sync --locked`. The flow then activates that venv
 in its own process, imports VK and runs it there.
 
 Each flow run shows one task per VK stage (`triage`, `classifier`, `analyst`, `implementer`,
