@@ -103,6 +103,32 @@ def test_review_comments_answered() -> None:
     assert out[0]["user"] == "alice" and out[0]["line"] == 3
 
 
+def _bot_tools(comments: list[dict[str, Any]]) -> dict[str, Tool]:
+    cfg = Config(**{**CFG.__dict__, "bot_login": "vk-app[bot]"})
+    session = FakeSession({("GET", "/repos/o/r/pulls/7/comments"): FakeResponse(200, comments)})
+    return {t.name: t for t in github_tools(GitHub(cfg, session), ATTENDED, None)}
+
+
+def test_me_uses_bot_login_without_http() -> None:
+    session = FakeSession({})
+    gh = GitHub(Config(**{**CFG.__dict__, "bot_login": "vk-app[bot]"}), session)
+    assert gh.me() == "vk-app[bot]"
+    assert session.calls == []
+
+
+def test_owner_comment_unanswered_when_bot_login_differs() -> None:
+    out = _bot_tools([_review_comment(1, "owner")])["github__listReviewComments"].fn(
+        {"pull_number": 7}
+    )
+    assert out[0]["answered"] is False
+
+
+def test_owner_comment_answered_by_later_bot_reply() -> None:
+    comments = [_review_comment(1, "owner"), _review_comment(2, "vk-app[bot]", 1)]
+    out = _bot_tools(comments)["github__listReviewComments"].fn({"pull_number": 7})
+    assert {c["id"]: c["answered"] for c in out} == {1: True, 2: True}
+
+
 def test_reply_to_review_comment() -> None:
     route = ("POST", "/repos/o/r/pulls/7/comments/9/replies")
     session = FakeSession({route: FakeResponse(201, {"id": 10})})

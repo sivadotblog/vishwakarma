@@ -34,7 +34,7 @@ class GitHub:
         self.cfg = cfg
         self.session = session or requests.Session()
         self.repo_path = f"/repos/{cfg.repo}"
-        self._login: str | None = None
+        self._login: str | None = cfg.bot_login
 
     def _send(self, method: str, path: str, **kw: Any) -> requests.Response:
         headers = {

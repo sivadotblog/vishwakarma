@@ -27,6 +27,7 @@ class Config:
     branch_prefix: str = "vk/"
     setup_command: str | None = None
     max_output_tokens: int = 100_000
+    bot_login: str | None = None
 
     def model_for(self, clan: str) -> str:
         return self.clan_models.get(clan, self.model)
@@ -70,6 +71,7 @@ def load_config(env: dict[str, str] | None = None, cwd: Path | None = None) -> C
         branch_prefix=e.get("VK_BRANCH_PREFIX", "vk/"),
         setup_command=e.get("VK_SETUP_COMMAND") or None,
         max_output_tokens=int(e.get("VK_MAX_OUTPUT_TOKENS", "100000")),
+        bot_login=e.get("VK_BOT_LOGIN") or None,
     )
 
 

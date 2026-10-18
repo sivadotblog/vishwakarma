@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic_ai.models.google import GoogleModel
 
-from vk.config import Config, ConfigError, build_model
+from vk.config import Config, ConfigError, build_model, load_config
 
 
 def make_cfg(model: str, **clan_models: str) -> Config:
@@ -47,3 +47,9 @@ def test_google_reads_process_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_google_without_gemini_key_defers_to_provider() -> None:
     assert build_model(make_cfg("google:gemini-x"), "analyst", {}) == "google:gemini-x"
+
+
+def test_bot_login_is_optional() -> None:
+    base = {"GITHUB_TOKEN": "t", "VK_MODEL": "m", "VK_REPO": "o/r"}
+    assert load_config(base).bot_login is None
+    assert load_config({**base, "VK_BOT_LOGIN": "vk-app[bot]"}).bot_login == "vk-app[bot]"

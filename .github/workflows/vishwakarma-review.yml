@@ -1,0 +1,66 @@
+name: Vishwakarma review (software factory)
+
+# A review submitted on a VK pull request hands it back to the software
+# factory, which answers every comment and pushes fixes. See packages/vk/README.md.
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: vishwakarma-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  vk-review:
+    if: startsWith(github.event.pull_request.head.ref, 'vk/') && github.event.review.user.type != 'Bot'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      # Only run for reviewers with at least triage permission.
+      - name: Check reviewer permission
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVIEWER: ${{ github.event.review.user.login }}
+        run: |
+          role=$(gh api "repos/${{ github.repository }}/collaborators/$REVIEWER/permission" --jq .role_name)
+          echo "$REVIEWER has role: $role"
+          case "$role" in
+            admin|maintain|write|triage) ;;
+            *) echo "::error::$REVIEWER cannot hand reviews to the factory"; exit 1 ;;
+          esac
+
+      # VK clones the PR branch itself, so check out the default branch.
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.0
+      - run: make setup-python
+
+      # VK acts as its own GitHub App, not as a person.
+      - id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.VK_APP_ID }}
+          private-key: ${{ secrets.VK_APP_PRIVATE_KEY }}
+
+      - name: Run VK review
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          VK_BOT_LOGIN: ${{ steps.app-token.outputs.app-slug }}[bot]
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          VK_MODEL: ${{ vars.VK_MODEL || 'gemini/gemini-3.5-flash' }}
+          VK_REPO: ${{ github.repository }}
+          VK_STATE_DIR: ${{ runner.temp }}/vk-state
+          PYDANTIC_AI_NO_BANNER: "1"
+        run: uv run --package vk vk review ${{ github.event.pull_request.number }} --unattended
+
+      - name: Report failure on the pull request
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} \
+            --body "The software factory review run failed. Log: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
