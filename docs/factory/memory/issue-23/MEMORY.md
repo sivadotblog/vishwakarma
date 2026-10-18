@@ -1,0 +1,8 @@
+- Issue #23: Document rewrite in STE (ASD-STE100) covers 11 files under `apps/web/src/content/docs/`.
+- Strict STE rules: max 20 words procedural, max 25 words descriptive, no `-ing` gerunds/adjectives, no phrasal verbs, simple tenses, active voice.
+- Code blocks, inline code, paths, labels, link targets, and MDX component props must remain untouched.
+- `make check` (including Prettier and Astro build) is the definition of done.
+- Issue #23: Document rewrite in STE (ASD-STE100) completed for 11 files under `apps/web/src/content/docs/`.
+- Applied STE rules: sentence word limits (<=20 procedural, <=25 descriptive), eliminated gerunds/participial adjectives (-ing forms), phrasal verbs, and passive voice constructions.
+- Preserved code blocks, inline code, paths, labels, link targets, and MDX component props.
+- `make check` passed cleanly.
