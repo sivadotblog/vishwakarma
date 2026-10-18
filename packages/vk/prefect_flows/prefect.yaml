@@ -5,9 +5,8 @@ name: vk
 prefect-version: ">=3.8.8,<4"
 
 # Run in the managed container before each flow run. The branch is resolved at run time from the
-# VK_BRANCH baked into each deployment's job env below. The shell step installs what VK's agents
-# need for `make check` (make, Node 22, uv) and runs `uv sync` with the worker's own Python;
-# flows.py then activates that venv in-process to import VK. uv, never pip (AGENTS.md).
+# VK_BRANCH baked into each deployment's job env below. The shell step installs uv and runs
+# `uv sync`; flows.py then activates that venv in-process to import VK.
 pull:
   - prefect.deployments.steps.git_clone:
       id: clone-step
@@ -18,9 +17,8 @@ pull:
       shell: true
       stream_output: true
       script: |
-        command -v make && command -v node || { apt-get update && apt-get install -y make curl ca-certificates && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs; }
-        command -v uv || [ -x "$HOME/.local/bin/uv" ] || curl -LsSf https://astral.sh/uv/0.12.1/install.sh | sh
-        PATH="$HOME/.local/bin:$PATH" uv sync --locked --python "$(command -v python)"
+        pip install uv
+        uv sync --locked
 
 definitions:
   work_pool: &vk-agents
