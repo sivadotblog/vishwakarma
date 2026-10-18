@@ -92,7 +92,6 @@ class Stages:
                 model=self.model,
                 remote_url=self.remote_url,
                 capabilities=nb.capabilities() if nb else (),
-                extra_instructions=nb.instructions if nb else "",
             ),
         )
         if not isinstance(result, out):
@@ -103,8 +102,6 @@ class Stages:
         self, name: str, out: type[T], instructions: str, message: str, tools: list[Tool]
     ) -> T:
         nb = self.notebook
-        if nb:
-            instructions = f"{instructions.rstrip()}\n\n{nb.instructions}\n"
         return _attempt(
             name,
             lambda: agents.run_typed(
@@ -119,8 +116,8 @@ class Stages:
             ),
         )
 
-    def notebook_changes(self) -> dict[str, str | None]:
-        """Notebook files to commit with the run log (none without a notebook)."""
+    def notebook_changes(self) -> dict[str, str]:
+        """The notebook page to commit with the run log (none without a notebook)."""
         return self.notebook.changes() if self.notebook else {}
 
 
@@ -392,10 +389,12 @@ def implement_and_review(
         impl = implement(revision)
 
 
-def load_notebook(cfg: Config, issue: int, ref: str, remote_url: str | None) -> Notebook:
+def load_notebook(
+    cfg: Config, issue: int, title: str, ref: str, remote_url: str | None
+) -> Notebook:
     """Materialize the run's memory from `ref`; a git failure ends the run as a stage failure."""
     try:
-        return memory.open_notebook(cfg, issue, ref, remote_url=remote_url)
+        return memory.open_notebook(cfg, issue, title, ref, remote_url=remote_url)
     except git.GitError as exc:
         raise StageFailed("memory", exc) from exc
 
@@ -450,7 +449,7 @@ def run_issue(
     log.info("issue #%d starting repo=%s", number, cfg.repo)
 
     try:
-        notebook = load_notebook(cfg, number, "HEAD", remote_url)
+        notebook = load_notebook(cfg, number, ctx["issue"].get("title", ""), "HEAD", remote_url)
         try:
             stages = Stages(cfg, model, remote_url, notebook)
             summary = _run(cfg, ops, stages, caller, number, issue, on_issue)

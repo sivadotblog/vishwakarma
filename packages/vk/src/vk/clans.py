@@ -109,14 +109,12 @@ def run_clan(
     model: Callable[[str], Model] | None = None,
     remote_url: str | None = None,
     capabilities: Sequence[AbstractCapability[None]] = (),
-    extra_instructions: str = "",
 ) -> BaseModel:
     """Run one clan to its typed output, in a fresh clone when it needs a repo.
 
     `model` (clan name -> PydanticAI model) and `remote_url` are test seams (fake model,
     git remote override). Without `model`, `build_model` picks the clan's configured model.
-    `capabilities` (such as the run's memory) are attached to the agent and
-    `extra_instructions` is appended to the clan's prompt.
+    `capabilities` (such as the run's memory) are attached to the agent.
     """
     clan = CLANS[name]
     log.info("clan %s starting model=%s", name, cfg.model_for(name))
@@ -128,8 +126,7 @@ def run_clan(
         result = agents.run_typed(
             name,
             clan.output,
-            instructions=clan.prompt(cfg, repo_dir)
-            + (f"\n\n{extra_instructions}\n" if extra_instructions else ""),
+            instructions=clan.prompt(cfg, repo_dir),
             message=message,
             tools=tools,
             cfg=cfg,

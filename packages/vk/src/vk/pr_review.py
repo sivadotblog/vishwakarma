@@ -272,7 +272,7 @@ def run_review(
     started = time.monotonic()
     log.info("review PR #%d starting items=%d", pr_number, len(items))
     try:
-        notebook = load_notebook(cfg, issue, head, remote_url)
+        notebook = load_notebook(cfg, issue, pr.get("title", ""), head, remote_url)
         try:
             stages = Stages(cfg, model, remote_url, notebook)
             summary = _handle(

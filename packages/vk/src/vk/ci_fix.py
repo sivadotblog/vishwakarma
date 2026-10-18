@@ -79,8 +79,12 @@ def run_ci_fix(
     log.info("ci-fix PR #%d attempt %d", pr_number, attempts + 1)
     try:
         closes = _CLOSES.search(pr.get("body") or "")
-        # Memory is per issue, so a PR that names none runs without it.
-        notebook = load_notebook(cfg, int(closes.group(1)), head, remote_url) if closes else None
+        # A page belongs to an issue, so a PR that names none runs without memory.
+        notebook = (
+            load_notebook(cfg, int(closes.group(1)), pr.get("title", ""), head, remote_url)
+            if closes
+            else None
+        )
         try:
             stages = Stages(cfg, model, remote_url, notebook)
             summary = _attempt(cfg, ops, stages, pr, failure, head, base)
