@@ -21,7 +21,14 @@ known-first-party = ["api", "vk"]
 
 [tool.mypy]
 strict = true
-files = ["apps/api/src", "apps/api/tests", "packages/vk/src", "packages/vk/tests"]
+files = [
+    "apps/api/src",
+    "apps/api/tests",
+    "packages/vk/src",
+    "packages/vk/tests",
+    "packages/vk/prefect_flows",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["apps/api/tests", "packages/vk/tests"]
+pythonpath = ["packages/vk"]

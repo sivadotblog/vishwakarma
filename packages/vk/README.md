@@ -81,6 +81,43 @@ Two workflows are shipped in this repo:
 
 Both only run for people with at least triage permission.
 
+These two workflows are turned off (`gh workflow disable`) in favour of the Prefect flows below
+and will be deleted later.
+
+## Run on Prefect
+
+VK also runs on demand as two Prefect flows, `vk-issue` (parameter `issue_number`) and
+`vk-review` (parameter `pr_number`), on the `vk-agents` managed work pool. Nothing triggers
+them; you start a run yourself.
+
+Create these in your Prefect workspace first:
+
+- Secret block `vk-app-private-key`: the GitHub App private key (PEM).
+- Secret block `vk-gemini-api-key`: the Gemini API key.
+- Variable `vk_app_id`: the GitHub App ID.
+- Variable `vk_model`: the model, defaults to `google:gemini-3.5-flash`.
+
+Deployments are defined in `packages/vk/prefect_flows/prefect.yaml` and registered by
+`.github/workflows/prefect-deploy.yml` with `PrefectHQ/actions-prefect-deploy`, which needs the
+repo secret `PREFECT_API_KEY`. A push to `main` that touches the flows deploys `vk-issue/main`
+and `vk-review/main`. To test a branch, run the workflow by hand on it
+(`gh workflow run prefect-deploy.yml --ref <branch>`); its deployments are named after the
+branch, with `/` and capitals slugified. GitHub only offers that once the workflow is on `main`;
+until then, deploy from your machine with the same file:
+`VK_BRANCH=<branch> VK_DEPLOYMENT=<slug> uv run prefect --no-prompt deploy --all --prefect-file packages/vk/prefect_flows/prefect.yaml`.
+Before each run, the pull steps in `prefect.yaml` clone
+that branch, install make, Node 22 and uv, and run `uv sync --locked`.
+
+Run one:
+
+```bash
+prefect deployment run 'vk-issue/main' -p issue_number=<n>
+prefect deployment run 'vk-review/main' -p pr_number=<n>
+```
+
+Managed runs pull the code from GitHub, so push your changes before you deploy or run. The pool
+runs one flow at a time; the rest wait in the queue.
+
 ## Trust
 
 Issue and PR text is untrusted input. `vk` only passes on, and acts on, comments written by the
