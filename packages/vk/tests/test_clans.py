@@ -1,7 +1,12 @@
 from pathlib import Path
 
-from vk.clans import CLANS, MAX_REPO_INSTRUCTIONS
+from pydantic_ai import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.models import Model
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+from vk.clans import CLANS, MAX_REPO_INSTRUCTIONS, run_clan
 from vk.config import Config
+from vk.models import Classification
 
 CFG = Config(repo="o/r", github_token="t", model="m", clan_models={}, state_dir=Path("/x"))
 
@@ -37,3 +42,30 @@ def test_long_instruction_files_are_truncated(tmp_path: Path) -> None:
 
 def test_analyst_is_told_to_read_nested_instruction_files() -> None:
     assert "AGENTS.md" in CLANS["analyst"].prompt(CFG, Path("/nowhere"))
+
+
+def test_run_clan_returns_the_clan_output_model() -> None:
+    payload = {
+        "type": "bug",
+        "priority": "high",
+        "complexity": "small",
+        "affected_area": "api",
+        "actionable": True,
+        "needs_clarification": False,
+        "questions": [],
+        "summary": "Reset emails are sent twice.",
+    }
+    seen: list[str] = []
+
+    def factory(name: str) -> Model:
+        seen.append(name)
+
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, payload)])
+
+        return FunctionModel(fn)
+
+    result = run_clan("classifier", "go", CFG, model=factory)
+
+    assert result == Classification.model_validate(payload)
+    assert seen == ["classifier"]

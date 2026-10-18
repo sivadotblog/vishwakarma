@@ -2,12 +2,16 @@
 
 import json
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import requests
+from pydantic_ai import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.models import Model
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from vk.approval import Caller
 from vk.cli import issue_task, review_task
@@ -62,15 +66,14 @@ def sh(*args: str, cwd: Path | None = None) -> str:
 
 
 class Script:
-    """Scripted `complete`: one queue of turns per agent, picked by the prompt's title."""
+    """Scripted orchestrator `complete`: a queue of turns for the VK agent."""
 
-    def __init__(self, **roles: list[Any]) -> None:
-        self.roles = roles
+    def __init__(self, vk: list[Any]) -> None:
+        self.turns = vk
         self.n = 0
 
     def __call__(self, **kw: Any) -> Any:
-        title = kw["messages"][0]["content"].split("\n", 1)[0].removeprefix("# ").lower()
-        turn = self.roles["vk" if title == "identity" else title].pop(0)
+        turn = self.turns.pop(0)
         self.n += 1
         calls = None
         if isinstance(turn, list):
@@ -84,6 +87,25 @@ class Script:
         msg = SimpleNamespace(content=None if calls else turn, tool_calls=calls)
         usage = SimpleNamespace(completion_tokens=1)
         return SimpleNamespace(choices=[SimpleNamespace(message=msg)], usage=usage)
+
+
+def clan_models(**roles: list[Any]) -> Callable[[str], Model]:
+    """Scripted clan models: one queue of turns per clan; `submit` calls the output tool."""
+
+    def factory(name: str) -> Model:
+        turns = roles[name]
+
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            calls = turns.pop(0)
+            parts = [
+                ToolCallPart(info.output_tools[0].name if tool == "submit" else tool, args)
+                for tool, args in calls
+            ]
+            return ModelResponse(parts=parts)
+
+        return FunctionModel(fn)
+
+    return factory
 
 
 class Resp:
@@ -141,8 +163,10 @@ def implementer_turns(*first: tuple[str, dict[str, Any]], prefix: str = "") -> l
         prefix
         + "echo fixed >> fix.txt && git add -A && git commit -qm fix; git branch --show-current"
     )
+    # One call per turn: PydanticAI runs a turn's tool calls concurrently, and these are ordered.
     return [
-        [*first, ("bash", {"command": commit})],
+        *([call] for call in first),
+        [("bash", {"command": commit})],
         [("push_branch", {"branch": BRANCH})],
         [("submit", IMPL)],
     ]
@@ -182,7 +206,9 @@ def test_issue_pipeline(cfg: Config, remote: Path) -> None:
             ],
             [("github__addLabels", {"issue_number": 7, "labels": ["vk:pr-open"]})],
             "Opened a draft PR.",
-        ],
+        ]
+    )
+    models = clan_models(
         classifier=[[("submit", CLS)]],
         analyst=[[("submit", ANALYSIS)]],
         implementer=impl,
@@ -195,6 +221,7 @@ def test_issue_pipeline(cfg: Config, remote: Path) -> None:
         Caller(True, issue_number=7),
         gh=GitHub(cfg, session),
         complete=script,
+        clan_model=models,
         remote_url=f"file://{remote}",
     )
 
@@ -262,7 +289,9 @@ def test_review_pipeline(cfg: Config, remote: Path, tmp_path: Path) -> None:
                 )
             ],
             "Fixed one comment, explained one.",
-        ],
+        ]
+    )
+    models = clan_models(
         implementer=implementer_turns(("checkout_branch", {"branch": BRANCH})),
         reviewer=[[("checkout_branch", {"branch": BRANCH})], [("submit", REVIEW)]],
     )
@@ -272,6 +301,7 @@ def test_review_pipeline(cfg: Config, remote: Path, tmp_path: Path) -> None:
         Caller(True, pr_number=9),
         gh=GitHub(cfg, session),
         complete=script,
+        clan_model=models,
         remote_url=f"file://{remote}",
     )
 

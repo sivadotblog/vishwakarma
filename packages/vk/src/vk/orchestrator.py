@@ -7,6 +7,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from pydantic_ai.models import Model
+
 from vk import llm
 from vk.approval import Caller, Confirm, default_confirm
 from vk.clans import CLANS, run_clan
@@ -42,13 +44,17 @@ _DESCRIPTIONS = {
 
 
 def _clan_tool(
-    name: str, cfg: Config, complete: Callable[..., Any] | None, remote_url: str | None
+    name: str,
+    cfg: Config,
+    clan_model: Callable[[str], Model] | None,
+    remote_url: str | None,
 ) -> Tool:
     def run(args: dict[str, Any]) -> dict[str, Any]:
         message = args.get("message")
         if not isinstance(message, str) or not message:
             raise ToolError("message is required.")
-        return run_clan(name, message, cfg, complete=complete, remote_url=remote_url)
+        result = run_clan(name, message, cfg, model=clan_model, remote_url=remote_url)
+        return result.model_dump(mode="json", by_alias=True)
 
     desc = f"{_DESCRIPTIONS[name]} The message must be self-contained: the clan sees no history."
     return Tool(f"run_{name}", desc, _MESSAGE_SCHEMA, run)
@@ -76,12 +82,12 @@ def build_orchestrator_tools(
     caller: Caller,
     confirm: Confirm | None = None,
     *,
-    complete: Callable[..., Any] | None = None,
+    clan_model: Callable[[str], Model] | None = None,
     remote_url: str | None = None,
 ) -> list[Tool]:
     ask = confirm or default_confirm
     user = None if caller.unattended else getpass.getuser()
-    tools = [_clan_tool(name, cfg, complete, remote_url) for name in CLANS]
+    tools = [_clan_tool(name, cfg, clan_model, remote_url) for name in CLANS]
     tools += github_tools(gh, caller, ask)
     tools += _gated_clear(preference_tools(cfg, user), ask)
     tools += brain_tools(cfg, can_write=not caller.unattended)
@@ -99,6 +105,7 @@ def run_vk(
     gh: GitHub | None = None,
     confirm: Confirm | None = None,
     complete: Callable[..., Any] | None = None,
+    clan_model: Callable[[str], Model] | None = None,
     remote_url: str | None = None,
 ) -> str:
     """Run VK on `task` and return its final reply."""
@@ -112,7 +119,7 @@ def run_vk(
         system=system,
         message=task,
         tools=build_orchestrator_tools(
-            cfg, gh, caller, confirm, complete=complete, remote_url=remote_url
+            cfg, gh, caller, confirm, clan_model=clan_model, remote_url=remote_url
         ),
         output_schema=None,
         max_output_tokens=cfg.max_output_tokens,

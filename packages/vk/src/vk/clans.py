@@ -1,4 +1,4 @@
-"""The five clans as data: prompt, output schema, model and tool surface."""
+"""The five clans as data: prompt, output model, model and tool surface."""
 
 import logging
 import shutil
@@ -6,17 +6,13 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
 
-from vk import git, llm
+from pydantic import BaseModel
+from pydantic_ai.models import Model
+
+from vk import agents, git
 from vk.config import Config
-from vk.schemas import (
-    ANALYST_OUTPUT_SCHEMA,
-    CLASSIFIER_OUTPUT_SCHEMA,
-    IMPLEMENTER_OUTPUT_SCHEMA,
-    RESEARCHER_OUTPUT_SCHEMA,
-    REVIEWER_OUTPUT_SCHEMA,
-)
+from vk.models import Analysis, Classification, Implementation, Research, Review
 from vk.tooling import Tool
 from vk.tools import artifact_tools, harness_tools
 
@@ -62,7 +58,7 @@ def _reviewer(cfg: Config, repo: Path, remote: str | None) -> list[Tool]:
 @dataclass(frozen=True)
 class Clan:
     name: str
-    schema: dict[str, Any]
+    output: type[BaseModel]
     needs_repo: bool
     tools: ToolBuilder
 
@@ -96,11 +92,11 @@ def repo_instructions(repo_dir: Path) -> str:
 
 
 CLANS: dict[str, Clan] = {
-    "classifier": Clan("classifier", CLASSIFIER_OUTPUT_SCHEMA, False, _classifier),
-    "researcher": Clan("researcher", RESEARCHER_OUTPUT_SCHEMA, False, _researcher),
-    "analyst": Clan("analyst", ANALYST_OUTPUT_SCHEMA, True, _analyst),
-    "implementer": Clan("implementer", IMPLEMENTER_OUTPUT_SCHEMA, True, _implementer),
-    "reviewer": Clan("reviewer", REVIEWER_OUTPUT_SCHEMA, True, _reviewer),
+    "classifier": Clan("classifier", Classification, False, _classifier),
+    "researcher": Clan("researcher", Research, False, _researcher),
+    "analyst": Clan("analyst", Analysis, True, _analyst),
+    "implementer": Clan("implementer", Implementation, True, _implementer),
+    "reviewer": Clan("reviewer", Review, True, _reviewer),
 }
 
 
@@ -109,12 +105,13 @@ def run_clan(
     message: str,
     cfg: Config,
     *,
-    complete: Callable[..., Any] | None = None,
+    model: Callable[[str], Model] | None = None,
     remote_url: str | None = None,
-) -> dict[str, Any]:
-    """Run one clan to its structured output, in a fresh clone when it needs a repo.
+) -> BaseModel:
+    """Run one clan to its typed output, in a fresh clone when it needs a repo.
 
-    `complete` and `remote_url` are test seams (LLM call, git remote override).
+    `model` (clan name -> PydanticAI model) and `remote_url` are test seams (fake model,
+    git remote override). Without `model`, `build_model` picks the clan's configured model.
     """
     clan = CLANS[name]
     log.info("clan %s starting model=%s", name, cfg.model_for(name))
@@ -123,19 +120,17 @@ def run_clan(
     try:
         # Clans without a repo get a placeholder dir only for tools that ignore it.
         tools = clan.tools(cfg, repo_dir or Path.cwd(), remote_url)
-        extra = {"complete": complete} if complete is not None else {}
-        result = llm.run_agent(
-            model=cfg.model_for(name),
-            system=clan.prompt(cfg, repo_dir),
+        result = agents.run_typed(
+            name,
+            clan.output,
+            instructions=clan.prompt(cfg, repo_dir),
             message=message,
             tools=tools,
-            output_schema=clan.schema,
-            max_output_tokens=cfg.max_output_tokens,
-            name=name,
-            **extra,
+            cfg=cfg,
+            model=model(name) if model is not None else None,
         )
         log.info("clan %s finished in %.1fs", name, time.monotonic() - started)
-        return cast(dict[str, Any], result)
+        return result
     finally:
         if repo_dir is not None:
             shutil.rmtree(repo_dir.parent, ignore_errors=True)
