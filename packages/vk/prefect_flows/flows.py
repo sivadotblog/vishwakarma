@@ -1,16 +1,35 @@
 """Prefect flows that run VK on demand: `vk-issue` for an issue, `vk-review` for a PR.
 
-The pull steps in `prefect.yaml` install the toolchain, sync the workspace and install VK into
-the image's Python. Each run mints a GitHub App installation token and calls VK's pipeline
-in-process, with each stage as a Prefect task. Secrets are never logged.
+The pull steps in `prefect.yaml` install the toolchain and `uv sync` the clone; this module
+activates that venv in-process before it imports VK. Each run mints a GitHub App installation
+token and calls VK's pipeline in-process, with each stage as a Prefect task. Secrets are never
+logged.
 """
+
+import site
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def activate_venv(root: Path) -> None:
+    """Make the `.venv` that `uv sync` built in `root` importable in this process.
+
+    The worker runs flows in its own Python, so this is the in-process form of activating the
+    venv. Its site-packages go after the worker's, so the worker's Prefect still wins.
+    """
+    version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    site.addsitedir(str(root / ".venv" / "lib" / version / "site-packages"))
+
+
+activate_venv(REPO_ROOT)
 
 import logging
 import os
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Literal, cast
 
 import httpx
@@ -33,8 +52,6 @@ from .stage_tasks import prefect_stage
 
 REPO = "sivadotblog/vishwakarma"
 DEFAULT_MODEL = "google:gemini-3.5-flash"
-REPO_ROOT = Path(__file__).resolve().parents[3]
-
 Kind = Literal["issue", "review"]
 Log = logging.Logger | logging.LoggerAdapter[logging.Logger]
 

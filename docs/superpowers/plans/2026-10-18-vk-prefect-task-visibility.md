@@ -198,3 +198,5 @@ Starts after Tasks 1 and 2 are committed.
 ## Amendment (after the first real run)
 
 The managed pool rejected `prefecthq/prefect:3.8.8-python3.12`: managed pools accept only Prefect's listed tags (`3-python3.12`, `3.7-python3.12`, ...), and there is no 3.8 tag. Task 3 Step 4 changes to: keep `image: prefecthq/prefect:3-python3.12`, and drop `--no-dev` from the `uv export` so the install also pins the locked `prefect==3.8.8` (the vk dev group adds only `prefect` and `types-requests`). The image's Prefect then matches `uv.lock` even when the floating tag moves; `uv pip check --system` still guards the result.
+
+The system install then crashed the run during the pull step. Final shape, as the user asked: no `image` job variable (the pool's default latest image), the pull step only runs `uv sync --locked --python "$(command -v python)"` after the existing toolchain line, and `flows.py` activates that `.venv` in-process with `site.addsitedir` before it imports VK (appended, so the worker's Prefect still wins).

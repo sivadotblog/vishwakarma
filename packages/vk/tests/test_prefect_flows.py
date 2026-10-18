@@ -223,3 +223,18 @@ def test_flows_loads_as_prefect_script() -> None:
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "vk-issue"
+
+
+def test_activate_venv_adds_site_packages_and_pth(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    site_dir = tmp_path / ".venv" / "lib" / version / "site-packages"
+    src = tmp_path / "src"
+    site_dir.mkdir(parents=True)
+    src.mkdir()
+    (site_dir / "_editable.pth").write_text(f"{src}\n")  # how uv installs workspace members
+    flows.activate_venv(tmp_path)
+    assert str(site_dir) in sys.path
+    assert str(src) in sys.path
