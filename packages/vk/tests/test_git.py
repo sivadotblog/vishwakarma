@@ -167,7 +167,7 @@ def test_read_files_filters_and_reads_a_branch_or_the_default(tmp_path: Path, re
     on_branch = read_files(cfg, "vk/x", "m", wanted, remote_url=remote)
     on_default = read_files(cfg, "HEAD", "m", wanted, remote_url=remote)
 
-    assert on_branch == {"m/a.md": "A"}
+    assert on_branch == {"m/a.md": "A\n"}
     assert on_default == {}
     assert not list((cfg.state_dir / "work").glob("snapshot-*"))
     with pytest.raises(GitError):
@@ -200,7 +200,19 @@ def test_read_files_accepts_head_and_plain_branch_names(
 
     files = read_files(cfg, ref, "m", lambda _p: True, remote_url=remote)
 
-    assert files == ({"m/a.md": "A"} if ref == "vk/bug-x" else {})
+    assert files == ({"m/a.md": "A\n"} if ref == "vk/bug-x" else {})
+
+
+def test_read_files_preserves_whitespace_and_newlines(tmp_path: Path, remote: str) -> None:
+    cfg = make_cfg(tmp_path)
+    repo = clone_repo(cfg, remote_url=remote)
+    sh("git", "checkout", "-b", "vk/ws", cwd=repo)
+    content = "  leading\ntrailing \n\n"
+    commit_files(repo, "vk/ws", {"m/space.md": content}, "add")
+    push_branch(cfg, repo, "vk/ws", remote_url=remote)
+
+    files = read_files(cfg, "vk/ws", "m", lambda _p: True, remote_url=remote)
+    assert files == {"m/space.md": content}
 
 
 def test_git_tools_surface(tmp_path: Path) -> None:

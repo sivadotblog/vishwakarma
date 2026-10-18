@@ -81,6 +81,18 @@ def load_config(env: dict[str, str] | None = None, cwd: Path | None = None) -> C
         if ":" not in name:
             raise ConfigError(f"{var}={name!r} must be {MODEL_FORMAT}.")
     repo = e.get("VK_REPO") or detect_repo(cwd)
+    raw_max_output = e.get("VK_MAX_OUTPUT_TOKENS", "100000")
+    try:
+        max_output_tokens = int(raw_max_output)
+    except ValueError:
+        raise ConfigError(f"VK_MAX_OUTPUT_TOKENS={raw_max_output!r} must be an integer.") from None
+
+    raw_max_input = e.get("VK_MAX_INPUT_TOKENS", "2000000")
+    try:
+        max_input_tokens = int(raw_max_input)
+    except ValueError:
+        raise ConfigError(f"VK_MAX_INPUT_TOKENS={raw_max_input!r} must be an integer.") from None
+
     return Config(
         repo=repo,
         github_token=token,
@@ -89,8 +101,8 @@ def load_config(env: dict[str, str] | None = None, cwd: Path | None = None) -> C
         state_dir=Path(e.get("VK_STATE_DIR", "~/.vk")).expanduser(),
         branch_prefix=e.get("VK_BRANCH_PREFIX", "vk/"),
         setup_command=e.get("VK_SETUP_COMMAND") or None,
-        max_output_tokens=int(e.get("VK_MAX_OUTPUT_TOKENS", "100000")),
-        max_input_tokens=int(e.get("VK_MAX_INPUT_TOKENS", "2000000")),
+        max_output_tokens=max_output_tokens,
+        max_input_tokens=max_input_tokens,
         bot_login=e.get("VK_BOT_LOGIN") or None,
     )
 

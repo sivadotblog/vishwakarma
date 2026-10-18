@@ -80,3 +80,17 @@ def test_input_token_budget_comes_from_the_environment() -> None:
     env = {"GITHUB_TOKEN": "t", "VK_MODEL": "test:m", "VK_REPO": "o/r"}
     assert load_config(env).max_input_tokens == 2_000_000
     assert load_config({**env, "VK_MAX_INPUT_TOKENS": "5000"}).max_input_tokens == 5000
+
+
+def test_output_token_budget_comes_from_the_environment() -> None:
+    env = {"GITHUB_TOKEN": "t", "VK_MODEL": "test:m", "VK_REPO": "o/r"}
+    assert load_config(env).max_output_tokens == 100_000
+    assert load_config({**env, "VK_MAX_OUTPUT_TOKENS": "5000"}).max_output_tokens == 5000
+
+
+@pytest.mark.parametrize("var", ["VK_MAX_OUTPUT_TOKENS", "VK_MAX_INPUT_TOKENS"])
+@pytest.mark.parametrize("bad_val", ["abc", "12.3", ""])
+def test_invalid_token_limits_raise_config_error(var: str, bad_val: str) -> None:
+    env = {"GITHUB_TOKEN": "t", "VK_MODEL": "test:m", "VK_REPO": "o/r", var: bad_val}
+    with pytest.raises(ConfigError, match=rf"{var}={bad_val!r} must be an integer"):
+        load_config(env)
