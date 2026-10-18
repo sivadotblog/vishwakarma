@@ -1,21 +1,17 @@
-"""Per-issue memory: notebooks committed with the run log, a read-only brain, no cross-talk."""
+"""Factory memory: one wiki, a page per issue; only the run's own page is committed."""
 
 from pathlib import Path
 
+from pydantic_ai import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
+from pydantic_ai.models import Model
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
 from vk.config import Config
-from vk.memory import (
-    BRAIN_BUDGET,
-    MAX_FILES,
-    RESTORED,
-    TRUNCATED,
-    Notebook,
-    _brain,
-    folder,
-    open_notebook,
-)
+from vk.memory import MEMORY_DIR, RESTORED, Notebook, open_notebook, page_name
 
 from .helpers import (
     BRANCH,
+    CLS,
     REVIEW,
     Call,
     PrSession,
@@ -29,13 +25,15 @@ from .test_pr_review import (
     comment as review_comment,
 )
 from .test_pr_review import (
-    decider,
     decision,
     go,
     revisions,
     routes,
+    triager,
 )
 
+PAGE = "issue-7-reset-emails-sent-twice.md"
+PR_PAGE = "issue-7-send-reset-emails-once.md"
 NOTE = "- reset sends dedupe on the token"
 LEARNING = "- run the full check before pushing, the lint step is slow"
 
@@ -62,31 +60,30 @@ def seed_main(remote: Path, tmp_path: Path, files: dict[str, str]) -> None:
 
 def writing_implementer() -> list[object]:
     return implementer_turns(
-        ("write_memory", {"content": NOTE}),
-        ("write_memory", {"content": LEARNING, "file": "repo-notes.md"}),
+        ("write_memory", {"content": NOTE, "file": PAGE}),
+        ("write_memory", {"content": LEARNING, "file": PAGE}),
         prefix=f"git checkout -qb {BRANCH} && ",
     )
 
 
-def test_issue_run_commits_its_notebook_in_the_run_log_commit(cfg: Config, remote: Path) -> None:
+def test_issue_run_commits_only_its_own_page_in_the_run_log_commit(
+    cfg: Config, remote: Path
+) -> None:
     calls: list[Call] = []
 
     start(cfg, remote, happy_models(calls, implementer=writing_implementer()))
 
-    assert show(remote, f"{folder(7)}/MEMORY.md").strip().endswith(NOTE)
-    assert show(remote, f"{folder(7)}/repo-notes.md").strip().endswith(LEARNING)
+    page = show(remote, f"{MEMORY_DIR}/{PAGE}")
+    assert NOTE in page and page.strip().endswith(LEARNING)
     head = sh("git", "--git-dir", str(remote), "show", "--name-only", "--format=", BRANCH)
-    assert set(head.split()) == {
-        "docs/factory/issue-7.md",
-        f"{folder(7)}/MEMORY.md",
-        f"{folder(7)}/repo-notes.md",
-    }
+    assert set(head.split()) == {"docs/factory/issue-7.md", f"{MEMORY_DIR}/{PAGE}"}
     assert not [p for p in tree(remote) if "memory-operations" in p or ".memory-tmp" in p]
-    # Every agent, not only the implementer, carries the memory tools and the guidance.
-    assert {c.agent for c in calls} >= {"triage", "classifier", "analyst", "reviewer", "pr_writer"}
+    # Every agent, not only the implementer, carries the memory tools and the page name.
+    assert {c.agent for c in calls} >= {"triager", "classifier", "analyst", "reviewer", "pr_writer"}
     for call in calls:
         assert "write_memory" in call.memory_tools, call.agent
-        assert "`repo-notes.md`" in call.instructions, call.agent
+        assert "search_memory" in call.memory_tools, call.agent
+        assert f"`{PAGE}`" in call.instructions and "{" not in call.instructions, call.agent
 
 
 def test_notes_written_by_the_pr_writer_are_committed_after_the_pr_text(
@@ -96,35 +93,35 @@ def test_notes_written_by_the_pr_writer_are_committed_after_the_pr_text(
     models = happy_models(
         calls,
         pr_writer=[
-            [("write_memory", {"content": "- the PR body stays short"})],
+            [("write_memory", {"content": "- the PR body stays short", "file": PAGE})],
             [("submit", {"title": "Send reset emails once", "body": "Dedupes."})],
         ],
     )
 
     _, session = start(cfg, remote, models)
 
-    assert show(remote, f"{folder(7)}/MEMORY.md").strip().endswith("- the PR body stays short")
+    assert show(remote, f"{MEMORY_DIR}/{PAGE}").strip().endswith("- the PR body stays short")
     assert session.posts("/pulls")
 
 
-def test_review_round_two_sees_the_note_from_round_one(
+def test_review_round_two_finds_the_page_round_one_wrote(
     cfg: Config, remote: Path, tmp_path: Path
 ) -> None:
     seed_branch(remote, tmp_path)
     first = clan_models(
-        decider=[
-            [("write_memory", {"content": "- alice wants guards on every send"})],
-            *decider(decision(101, "wontfix", "Out of scope.")),
+        triager=[
+            [("write_memory", {"content": "- alice wants guards on every send", "file": PR_PAGE})],
+            *triager(decision(101, "skip", "Out of scope.")),
         ]
     )
     go(cfg, remote, first, PrSession(routes(comments=[review_comment(101)]), remote))
-    assert "alice wants guards" in show(remote, f"{folder(7)}/MEMORY.md")
+    assert "alice wants guards" in show(remote, f"{MEMORY_DIR}/{PR_PAGE}")
 
     calls: list[Call] = []
-    second = clan_models(calls=calls, decider=decider(decision(201, "wontfix", "Noted.")))
+    second = clan_models(calls=calls, triager=triager(decision(201, "skip", "Noted.")))
     go(cfg, remote, second, PrSession(routes(comments=[review_comment(201)]), remote))
 
-    assert "alice wants guards on every send" in calls[0].memory
+    assert PR_PAGE in calls[0].memory and f"`{PR_PAGE}`" in calls[0].instructions
     assert "## Review round 2" in show(remote, "docs/factory/issue-7.md")
 
 
@@ -135,143 +132,175 @@ def test_a_fix_run_still_reaches_memory_through_every_clan(
     calls: list[Call] = []
     models = clan_models(
         calls=calls,
-        decider=decider(decision(101, "fix", "Right.", "Guard it.")),
+        triager=triager(decision(101, "fix_direct", "Right.", "Guard it.")),
         implementer=revisions(0),
         reviewer=[[("submit", REVIEW)]],
     )
 
     go(cfg, remote, models, PrSession(routes(comments=[review_comment(101)]), remote))
 
-    assert [c.agent for c in calls] == ["decider", "implementer", "reviewer"]
+    assert [c.agent for c in calls] == ["triager", "implementer", "reviewer"]
     assert all("write_memory" in c.memory_tools for c in calls)
 
 
-def test_another_issues_repo_notes_are_a_read_only_brain(
-    cfg: Config, remote: Path, tmp_path: Path
-) -> None:
+def searching(query: str, seen: list[str]) -> Model:
+    """A classifier that searches memory once, records what came back, then answers."""
+
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        returned = [
+            str(p.content)
+            for m in messages
+            if isinstance(m, ModelRequest)
+            for p in m.parts
+            if isinstance(p, ToolReturnPart)
+        ]
+        if not returned:
+            return ModelResponse(parts=[ToolCallPart("search_memory", {"query": query})])
+        seen.extend(returned)
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, CLS)])
+
+    return FunctionModel(fn)
+
+
+def test_search_memory_finds_another_issues_page(cfg: Config, remote: Path, tmp_path: Path) -> None:
     seed_main(
         remote,
         tmp_path,
         {
-            f"{folder(5)}/repo-notes.md": "- always run make check\n",
-            f"{folder(5)}/MEMORY.md": "- private scratch of issue five\n",
+            f"{MEMORY_DIR}/MEMORY.md": "Factory note: search before you start.\n",
+            f"{MEMORY_DIR}/issue-5-lint-setup.md": "- always run make check\n",
         },
     )
     calls: list[Call] = []
-    # The run tries to write into issue 5's folder; the memory tool refuses the name.
-    sneaky = {"content": "- overwritten", "file": "../issue-5/repo-notes.md"}
-    implementer = [[("write_memory", sneaky)], *writing_implementer()]
+    seen: list[str] = []
+    base = happy_models(calls)
+
+    def models(name: str) -> Model:
+        return searching("make check", seen) if name == "classifier" else base(name)
+
+    start(cfg, remote, models)
+
+    assert "issue-5-lint-setup.md" in "".join(seen)
+    for call in calls:  # the factory note and the listing cover every issue
+        assert "Factory note: search before you start." in call.memory, call.agent
+        assert "issue-5-lint-setup.md" in call.memory, call.agent
+
+
+def test_only_the_runs_own_page_is_committed(cfg: Config, remote: Path, tmp_path: Path) -> None:
+    seed_main(
+        remote,
+        tmp_path,
+        {
+            f"{MEMORY_DIR}/MEMORY.md": "Factory note.\n",
+            f"{MEMORY_DIR}/issue-5-lint-setup.md": "- always run make check\n",
+        },
+    )
+    implementer = implementer_turns(
+        ("write_memory", {"content": "- scribble on the factory note"}),  # defaults to MEMORY.md
+        ("write_memory", {"content": "- scribble on issue five", "file": "issue-5-lint-setup.md"}),
+        ("write_memory", {"content": "- sneaky", "file": "../MEMORY.md"}),  # refused by the tool
+        ("write_memory", {"content": NOTE, "file": PAGE}),
+        prefix=f"git checkout -qb {BRANCH} && ",
+    )
+
+    start(cfg, remote, happy_models([], implementer=implementer))
+
+    changed = sh("git", "--git-dir", str(remote), "diff", "--name-only", "main", BRANCH)
+    assert set(changed.split()) == {"fix.txt", "docs/factory/issue-7.md", f"{MEMORY_DIR}/{PAGE}"}
+    assert show(remote, f"{MEMORY_DIR}/MEMORY.md") == "Factory note."
+    assert show(remote, f"{MEMORY_DIR}/issue-5-lint-setup.md") == "- always run make check"
+
+
+def test_an_existing_page_is_reused_and_shown_to_the_agents(
+    cfg: Config, remote: Path, tmp_path: Path
+) -> None:
+    seed_main(remote, tmp_path, {f"{MEMORY_DIR}/issue-7-older-title.md": "- earlier round\n"})
+    calls: list[Call] = []
+    implementer = implementer_turns(
+        ("write_memory", {"content": NOTE, "file": "issue-7-older-title.md"}),
+        prefix=f"git checkout -qb {BRANCH} && ",
+    )
 
     start(cfg, remote, happy_models(calls, implementer=implementer))
 
-    for call in calls:
-        assert "Factory brain" in call.instructions, call.agent
-        assert "- always run make check" in call.instructions, call.agent
-        assert "private scratch" not in call.instructions + call.memory, call.agent
-        assert "always run make check" not in call.memory, call.agent  # not a writable notebook
-    assert show(remote, f"{folder(5)}/repo-notes.md", "main").strip() == "- always run make check"
-    assert show(remote, f"{folder(5)}/repo-notes.md").strip() == "- always run make check"
-    changed = sh("git", "--git-dir", str(remote), "diff", "--name-only", "main", BRANCH)
-    assert set(changed.split()) == {
-        "fix.txt",
-        "docs/factory/issue-7.md",
-        f"{folder(7)}/MEMORY.md",
-        f"{folder(7)}/repo-notes.md",
-    }
+    assert all("`issue-7-older-title.md`" in c.instructions for c in calls)
+    assert all("issue-7-older-title.md" in c.memory for c in calls)
+    assert not [p for p in tree(remote) if p.endswith(PAGE)]
+    page = show(remote, f"{MEMORY_DIR}/issue-7-older-title.md")
+    assert "- earlier round" in page and NOTE in page
 
 
-def test_a_notebook_starts_from_the_refs_files_and_shows_them_to_the_agent(
-    cfg: Config, remote: Path, tmp_path: Path
-) -> None:
-    seed_main(remote, tmp_path, {f"{folder(7)}/MEMORY.md": "- from an earlier round\n"})
-    calls: list[Call] = []
-
-    start(cfg, remote, happy_models(calls))
-
-    assert all("from an earlier round" in c.memory for c in calls)
+def test_page_names_are_short_ascii_slugs() -> None:
+    assert page_name(7, "Reset emails sent twice!") == "issue-7-reset-emails-sent-twice.md"
+    assert page_name(7, "Ünïcode, émojis 🎉 & more") == "issue-7-n-code-mojis-more.md"
+    assert page_name(7, "") == "issue-7-notes.md"
+    long = page_name(7, "word " * 40)
+    assert len(long) <= 80 and long.endswith("word.md") and "--" not in long
 
 
-def test_the_brain_is_newest_first_and_cut_at_the_budget() -> None:
-    brain = _brain({1: "A" * 5000, 2: "B" * 5000, 3: "C" * 5000})
-
-    assert brain.index("issue #3") < brain.index("issue #2") and "issue #1" not in brain
-    assert brain.endswith(TRUNCATED)
-    assert brain.count("C") == 5000 and 0 < brain.count("B") < 5000
-    assert len(brain) < BRAIN_BUDGET + 400  # the header sits outside the budget
-    assert _brain({}) == ""
-
-
-def test_open_notebook_reads_own_files_and_other_issues_notes_only(
+def test_open_notebook_reads_flat_pages_and_picks_the_issues_own(
     cfg: Config, remote: Path, tmp_path: Path
 ) -> None:
     seed_main(
         remote,
         tmp_path,
         {
-            f"{folder(7)}/MEMORY.md": "mine\n",
-            f"{folder(7)}/extra.md": "also mine\n",
-            f"{folder(7)}/raw.json": "{}",
-            f"{folder(5)}/repo-notes.md": "five's learning\n",
-            f"{folder(5)}/MEMORY.md": "five's notebook\n",
-            f"{folder(6)}/repo-notes.md": "six's learning\n",
+            f"{MEMORY_DIR}/MEMORY.md": "factory note\n",
+            f"{MEMORY_DIR}/issue-1-short.md": "one\n",
+            f"{MEMORY_DIR}/issue-17-long.md": "seventeen\n",
+            f"{MEMORY_DIR}/raw.json": "{}",
+            f"{MEMORY_DIR}/old/issue-1-nested.md": "nested\n",
         },
     )
 
-    nb = open_notebook(cfg, 7, "HEAD", remote_url=f"file://{remote}")
+    nb = open_notebook(cfg, 17, "Ignored title", "HEAD", remote_url=f"file://{remote}")
     try:
-        assert sorted(p.name for p in (nb.root / "issue-7").iterdir()) == ["MEMORY.md", "extra.md"]
-        assert not (nb.root / "issue-5").exists()
-        assert nb.brain.index("issue #6") < nb.brain.index("issue #5")
-        assert "five's notebook" not in nb.brain and "mine" not in nb.brain
+        assert nb.page == "issue-17-long.md"
+        assert sorted(p.name for p in (nb.root / "factory").iterdir()) == [
+            "MEMORY.md",
+            "issue-1-short.md",
+            "issue-17-long.md",
+        ]
         assert nb.changes() == {}
     finally:
         nb.close()
     assert not nb.root.exists()
+    fresh = open_notebook(cfg, 3, "A new one", "HEAD", remote_url=f"file://{remote}")
+    try:
+        assert fresh.page == "issue-3-a-new-one.md" and fresh.changes() == {}
+    finally:
+        fresh.close()
 
 
-def test_changes_cover_only_visible_markdown_in_the_issue_folder(tmp_path: Path) -> None:
-    nb = Notebook(7, tmp_path, "", {f"{folder(7)}/old.md": "old", f"{folder(7)}/keep.md": "keep"})
-    home = tmp_path / "issue-7"
-    home.mkdir()
-    (home / "keep.md").write_text("keep")
-    (home / "MEMORY.md").write_text("new")
-    (home / ".memory-operations.json").write_text("{}")
-    (home / ".memory-tmp-1").write_text("x")
-    (home / "data.json").write_text("{}")
-    (home / "link.md").symlink_to(tmp_path / "elsewhere")
-    (tmp_path / "issue-8").mkdir()
-    (tmp_path / "issue-8" / "MEMORY.md").write_text("not mine")
-    (tmp_path / ".memory-operations.json").write_text("{}")
+def started(tmp_path: Path, before: str, after: str | None) -> Notebook:
+    """A notebook whose page started as `before` and now holds `after` (None = deleted)."""
+    nb = Notebook("issue-7-x.md", tmp_path, start=before, saved=before)
+    (tmp_path / "factory").mkdir()
+    if after is not None:
+        (tmp_path / "factory" / "issue-7-x.md").write_text(after)
+    return nb
 
-    assert nb.changes() == {f"{folder(7)}/MEMORY.md": "new", f"{folder(7)}/old.md": None}
+
+PATH = f"{MEMORY_DIR}/issue-7-x.md"
+
+
+def test_a_new_page_is_committed_and_then_settled(tmp_path: Path) -> None:
+    nb = started(tmp_path, "", "- first\n")
+
+    assert nb.changes() == {PATH: "- first\n"}
     nb.mark_saved()
     assert nb.changes() == {}
 
 
-def test_a_runaway_notebook_is_capped(tmp_path: Path) -> None:
-    nb = Notebook(7, tmp_path, "")
-    home = tmp_path / "issue-7"
-    home.mkdir()
-    for n in range(MAX_FILES + 10):
-        (home / f"n{n:03}.md").write_text("x")
-
-    assert len(nb.changes()) == MAX_FILES
-
-
-def started(tmp_path: Path, name: str, before: str, after: str | None) -> Notebook:
-    """A notebook that started with `before` in `name` and now holds `after` (None = deleted)."""
-    nb = Notebook(7, tmp_path, "", {f"{folder(7)}/{name}": before})
-    (tmp_path / "issue-7").mkdir()
-    if after is not None:
-        (tmp_path / "issue-7" / name).write_text(after)
-    return nb
+def test_a_page_the_run_never_wrote_is_not_committed(tmp_path: Path) -> None:
+    assert started(tmp_path, "", None).changes() == {}
 
 
 def test_a_rewrite_that_drops_lines_gets_them_restored(tmp_path: Path) -> None:
     before = "## Round 0\n- first note\n\n- second note\n"
-    nb = started(tmp_path, "MEMORY.md", before, "## Round 1\n- fresh note\n")
+    nb = started(tmp_path, before, "## Round 1\n- fresh note\n")
 
-    got = nb.changes()[f"{folder(7)}/MEMORY.md"]
+    got = nb.changes()[PATH]
 
     assert got == (
         f"## Round 1\n- fresh note\n\n{RESTORED}\n\n## Round 0\n- first note\n- second note\n"
@@ -280,34 +309,30 @@ def test_a_rewrite_that_drops_lines_gets_them_restored(tmp_path: Path) -> None:
     assert nb.changes() == {}  # the restored text is what counts as committed
 
 
-def test_deleting_a_log_restores_all_of_it(tmp_path: Path) -> None:
-    nb = started(tmp_path, "repo-notes.md", "- a\n- b\n", None)
+def test_deleting_the_page_restores_all_of_it(tmp_path: Path) -> None:
+    nb = started(tmp_path, "- a\n- b\n", None)
 
-    assert nb.changes() == {f"{folder(7)}/repo-notes.md": f"{RESTORED}\n\n- a\n- b\n"}
+    assert nb.changes() == {PATH: f"{RESTORED}\n\n- a\n- b\n"}
 
 
 def test_a_pure_append_is_committed_unchanged(tmp_path: Path) -> None:
-    nb = started(tmp_path, "MEMORY.md", "- a\n", "- a\n- b\n")
+    nb = started(tmp_path, "- a\n", "- a\n- b\n")
 
-    assert nb.changes() == {f"{folder(7)}/MEMORY.md": "- a\n- b\n"}
+    assert nb.changes() == {PATH: "- a\n- b\n"}
 
 
 def test_correcting_one_line_also_restores_the_old_line(tmp_path: Path) -> None:
     # Accepted trade-off: the guard cannot tell a correction from a drop, so the wrong line
     # comes back under the heading and a reviewer prunes it.
-    nb = started(tmp_path, "MEMORY.md", "- keep\n- wrong\n", "- keep\n- right\n")
+    nb = started(tmp_path, "- keep\n- wrong\n", "- keep\n- right\n")
 
-    assert nb.changes() == {f"{folder(7)}/MEMORY.md": f"- keep\n- right\n\n{RESTORED}\n\n- wrong\n"}
-
-
-def test_other_topic_files_are_not_guarded(tmp_path: Path) -> None:
-    nb = started(tmp_path, "topic.md", "- a\n- b\n", "- c\n")
-
-    assert nb.changes() == {f"{folder(7)}/topic.md": "- c\n"}
+    assert nb.changes() == {PATH: f"- keep\n- right\n\n{RESTORED}\n\n- wrong\n"}
 
 
-def test_guidance_tells_agents_to_append_and_keep_earlier_entries() -> None:
-    text = Notebook(7, Path("."), "").instructions
+def test_capabilities_carry_the_guidance_with_the_exact_page() -> None:
+    (memory,) = Notebook("issue-7-x.md", Path(".")).capabilities()
 
-    assert "`repo-notes.md`" in text and "{" not in text
+    text = str(memory.get_instructions())
+    assert "`issue-7-x.md`" in text and "{" not in text
     assert "without `old_text`" in text and "Never remove or rewrite earlier" in text
+    assert "## Repo notes" in text

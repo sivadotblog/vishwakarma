@@ -16,6 +16,7 @@ from pydantic_ai.usage import RequestUsage
 from vk.agents import adapt, run_typed
 from vk.config import Config
 from vk.tooling import Tool, ToolError
+from vk.tools import MAX_OUTPUT_CHARS
 
 
 class Verdict(BaseModel):
@@ -23,7 +24,7 @@ class Verdict(BaseModel):
     note: str | None
 
 
-def make_cfg(budget: int = 1000) -> Config:
+def make_cfg(budget: int = 1000, input_budget: int = 2_000_000) -> Config:
     return Config(
         repo="o/r",
         github_token="t",
@@ -31,6 +32,7 @@ def make_cfg(budget: int = 1000) -> Config:
         clan_models={},
         state_dir=Path("/tmp/vk-test"),
         max_output_tokens=budget,
+        max_input_tokens=input_budget,
     )
 
 
@@ -43,9 +45,14 @@ def tool_returns(messages: list[ModelMessage]) -> list[ToolReturnPart]:
 
 
 def run(
-    model: FunctionModel, tools: list[Tool], output_type: type = Verdict, budget: int = 1000
+    model: FunctionModel,
+    tools: list[Tool],
+    output_type: type = Verdict,
+    budget: int = 1000,
+    input_budget: int = 2_000_000,
 ) -> Any:
-    return run_typed("analyst", output_type, "be brief", "go", tools, make_cfg(budget), model=model)
+    cfg = make_cfg(budget, input_budget)
+    return run_typed("analyst", output_type, "be brief", "go", tools, cfg, model=model)
 
 
 ECHO = Tool(
@@ -144,6 +151,41 @@ def test_output_token_budget_exceeded() -> None:
 
     with pytest.raises(UsageLimitExceeded):
         run(FunctionModel(fn), [], budget=10)
+
+
+def test_input_token_budget_exceeded_raises_and_is_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        usage = RequestUsage(input_tokens=600, output_tokens=1)
+        if not tool_returns(messages):
+            return ModelResponse(parts=[ToolCallPart("echo", {"x": 1})], usage=usage)
+        return final(info, {"verdict": "ok", "note": None}, usage=usage)
+
+    with caplog.at_level(logging.INFO, logger="vk.agents"), pytest.raises(UsageLimitExceeded):
+        run(FunctionModel(fn), [ECHO], input_budget=1000)
+    lines = [r.getMessage() for r in caplog.records]
+    assert any(
+        line.startswith("agent analyst done status=failed error=UsageLimitExceeded")
+        and "prompt_tokens=1200" in line
+        for line in lines
+    )
+
+
+def test_input_budget_defaults_to_two_million() -> None:
+    assert make_cfg().max_input_tokens == 2_000_000
+
+
+def test_a_large_tool_result_is_capped_with_a_note() -> None:
+    big = Tool("big", "b", {"type": "object"}, lambda _: {"blob": "x" * 100_000})
+    small = Tool("small", "s", {"type": "object"}, lambda _: "short")
+    capped: Callable[..., Any] = adapt(big).function
+    untouched: Callable[..., Any] = adapt(small).function
+    text = capped()
+    assert len(text) < MAX_OUTPUT_CHARS + 100
+    assert text.startswith('{"blob": "xxx')
+    assert text.endswith("characters]") and "[truncated " in text
+    assert untouched() == "short"
 
 
 def test_plain_text_output() -> None:

@@ -26,6 +26,8 @@ from .test_pr_review import CHANGES, no_model, revisions, writes
 
 CALLER = Caller(True, pr_number=9)
 PR_COMMENTS = "/issues/9/comments"
+PAGE_PATH = "docs/factory/memory/issue-7-send-reset-emails-once.md"
+PAGE = "issue-7-send-reset-emails-once.md"
 DIAGNOSIS = {
     "summary": "The lint check failed.",
     "likely_cause": "An unused import in a.py.",
@@ -137,7 +139,7 @@ def test_an_attempt_is_announced_diagnosed_fixed_and_reported(
 
     assert [c.agent for c in calls] == ["ci_diagnoser", "implementer", "reviewer"]
     diagnoser = calls[0]
-    assert all(t.startswith("github__") for t in diagnoser.tools)
+    assert diagnoser.tools == []  # the failure context is in its message
     assert "CI diagnoser" in diagnoser.instructions and "How you write" in diagnoser.instructions
     assert "ruff: F401 unused import in a.py" in diagnoser.prompt
     assert "Remove the unused import from a.py." in calls[1].prompt and BRANCH in calls[1].prompt
@@ -195,7 +197,7 @@ def test_notes_from_a_fix_attempt_are_committed_to_the_branch_after_the_fix(
     before = branch_sha(remote)
     models = clan_models(
         ci_diagnoser=[
-            [("write_memory", {"content": "- lint runs on the whole tree"})],
+            [("write_memory", {"content": "- lint runs on the whole tree", "file": PAGE})],
             [("submit", DIAGNOSIS)],
         ],
         implementer=revisions(0),
@@ -206,11 +208,7 @@ def test_notes_from_a_fix_attempt_are_committed_to_the_branch_after_the_fix(
     go(cfg, remote, models, session)
 
     git = ["git", "--git-dir", str(remote)]
-    assert sh(*git, "show", "--name-only", "--format=", BRANCH).split() == [
-        "docs/factory/memory/issue-7/MEMORY.md"
-    ]
-    assert "lint runs on the whole tree" in sh(
-        *git, "show", f"{BRANCH}:docs/factory/memory/issue-7/MEMORY.md"
-    )
+    assert sh(*git, "show", "--name-only", "--format=", BRANCH).split() == [PAGE_PATH]
+    assert "lint runs on the whole tree" in sh(*git, "show", f"{BRANCH}:{PAGE_PATH}")
     outcome = session.posts(PR_COMMENTS)[-1]["body"]
     assert branch_sha(remote)[:7] in outcome  # the reported head includes the notes commit

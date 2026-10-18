@@ -82,6 +82,27 @@ def _review_comment(cid: int, login: str, reply_to: int | None = None) -> dict[s
     }
 
 
+def test_repository_tree_is_shallow_unless_recursive() -> None:
+    path = "/repos/o/r/git/trees/HEAD"
+    session = FakeSession({("GET", path): FakeResponse(200, {"tree": []})})
+    tree = tools(session)["github__getRepositoryTree"]
+    tree.fn({})
+    tree.fn({"recursive": True})
+    assert [c["params"] for c in session.calls] == [None, {"recursive": "1"}]
+
+
+def test_review_comments_carry_the_diff_hunk() -> None:
+    comment = {**_review_comment(3, "alice"), "diff_hunk": "@@ -1 +1 @@\n+new"}
+    session = FakeSession(
+        {
+            ("GET", "/user"): FakeResponse(200, {"login": "bot"}),
+            ("GET", "/repos/o/r/pulls/7/comments"): FakeResponse(200, [comment]),
+        }
+    )
+    out = tools(session)["github__listReviewComments"].fn({"pull_number": 7})
+    assert out[0]["diff_hunk"] == "@@ -1 +1 @@\n+new"
+
+
 def test_review_comments_answered() -> None:
     comments = [
         _review_comment(1, "alice"),  # answered by bot reply 2

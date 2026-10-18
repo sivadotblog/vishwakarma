@@ -12,7 +12,7 @@ from vk import agents, pipeline
 from vk.ci_fix import run_ci_fix
 from vk.config import Config
 from vk.github import GitHub
-from vk.models import Analysis, Triage
+from vk.models import Analysis, IssueTriage
 from vk.pipeline import StageFailed, Stages, run_issue
 from vk.pr_review import run_review
 
@@ -21,7 +21,7 @@ from .test_issue_pipeline import ROUTES, UNATTENDED, happy_models
 
 CFG = Config(repo="o/r", github_token="t", model="m", clan_models={}, state_dir=Path("/x"))
 ANALYSIS_RESULT = Analysis.model_construct()
-TRIAGE_RESULT = Triage.model_construct()
+TRIAGE_RESULT = IssueTriage.model_construct()
 
 
 class Recorder:
@@ -64,8 +64,8 @@ def test_clan_goes_through_wrapper(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_agent_goes_through_wrapper(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(agents, "run_typed", lambda *a, **k: TRIAGE_RESULT)
     wrap = Recorder()
-    assert Stages(CFG, wrap=wrap).agent("triage", Triage, "i", "m", []) is TRIAGE_RESULT
-    assert wrap.seen == ["triage"]
+    assert Stages(CFG, wrap=wrap).agent("triager", IssueTriage, "i", "m") is TRIAGE_RESULT
+    assert wrap.seen == ["triager"]
 
 
 def test_retry_happens_inside_one_wrapper_call(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -103,6 +103,6 @@ def test_run_issue_uses_stage_wrapper(cfg: Config, remote: Path) -> None:
         remote_url=f"file://{remote}",
         stage_wrapper=wrap,
     )
-    assert wrap.seen[:2] == ["triage", "classifier"]
+    assert wrap.seen[:2] == ["triager", "classifier"]
     for stage in ("analyst", "implementer", "reviewer", "pr_writer"):
         assert stage in wrap.seen
