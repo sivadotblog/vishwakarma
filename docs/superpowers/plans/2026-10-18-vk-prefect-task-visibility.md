@@ -194,3 +194,9 @@ Starts after Tasks 1 and 2 are committed.
 - [ ] **Step 1:** Review the full branch diff against the spec and this plan's Global Constraints and Review Focus. Run `make check` once.
 - [ ] **Step 2:** Push the branch, open the PR (dependency note: none added), and deploy the branch with `VK_BRANCH=<branch> VK_DEPLOYMENT=<slug> uv run prefect --no-prompt deploy --all --prefect-file packages/vk/prefect_flows/prefect.yaml` (or `gh workflow run prefect-deploy.yml --ref <branch>`).
 - [ ] **Step 3:** With the user's go-ahead, run `vk-issue/<slug>` on a small test issue. Check in the Prefect UI: one task per stage, VK log lines inside the tasks, the flow result is VK's summary, and a draft PR exists.
+
+## Amendment (after the first real run)
+
+The managed pool rejected `prefecthq/prefect:3.8.8-python3.12`: managed pools accept only Prefect's listed tags (`3-python3.12`, `3.7-python3.12`, ...), and there is no 3.8 tag. Task 3 Step 4 changes to: keep `image: prefecthq/prefect:3-python3.12`, and drop `--no-dev` from the `uv export` so the install also pins the locked `prefect==3.8.8` (the vk dev group adds only `prefect` and `types-requests`). The image's Prefect then matches `uv.lock` even when the floating tag moves; `uv pip check --system` still guards the result.
+
+The system install then crashed the run during the pull step. Final shape, as the user asked: no `image` job variable (the pool's default latest image), the pull step only runs `uv sync --locked --python "$(command -v python)"` after the existing toolchain line, and `flows.py` activates that `.venv` in-process with `site.addsitedir` before it imports VK (appended, so the worker's Prefect still wins).
