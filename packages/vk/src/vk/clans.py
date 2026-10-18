@@ -111,18 +111,24 @@ def run_clan(
     model: Callable[[str], Model] | None = None,
     remote_url: str | None = None,
     capabilities: Sequence[AbstractCapability[None]] = (),
+    branch: str | None = None,
 ) -> BaseModel:
     """Run one clan to its typed output, in a fresh clone when it needs a repo.
 
     `model` (clan name -> PydanticAI model) and `remote_url` are test seams (fake model,
     git remote override). Without `model`, `build_model` picks the clan's configured model.
-    `capabilities` (such as the run's memory) are attached to the agent.
+    `capabilities` (such as the run's memory) are attached to the agent. With `branch`, a
+    clan that needs a repo gets a clone with that branch checked out instead of the default.
     """
     clan = CLANS[name]
     log.info("clan %s starting model=%s", name, cfg.model_for(name))
     started = time.monotonic()
     repo_dir = git.clone_repo(cfg, remote_url=remote_url) if clan.needs_repo else None
     try:
+        if repo_dir is not None and branch:
+            checkout = git.checkout_branch(cfg, repo_dir, branch, remote_url=remote_url)
+            if not checkout["success"]:
+                raise git.GitError(str(checkout["error"]))
         # Clans without a repo get a placeholder dir only for tools that ignore it.
         tools = clan.tools(cfg, repo_dir or Path.cwd(), remote_url)
         result = agents.run_typed(

@@ -17,9 +17,8 @@ CLANS = (
     "analyst",
     "implementer",
     "reviewer",
-    "triage",
+    "triager",
     "pr_writer",
-    "decider",
     "ci_diagnoser",
 )
 MODEL_FORMAT = "a native 'provider:model' string, e.g. 'google:gemini-3.5-flash'"

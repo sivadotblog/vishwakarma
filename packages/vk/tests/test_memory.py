@@ -25,11 +25,11 @@ from .test_pr_review import (
     comment as review_comment,
 )
 from .test_pr_review import (
-    decider,
     decision,
     go,
     revisions,
     routes,
+    triager,
 )
 
 PAGE = "issue-7-reset-emails-sent-twice.md"
@@ -79,7 +79,7 @@ def test_issue_run_commits_only_its_own_page_in_the_run_log_commit(
     assert set(head.split()) == {"docs/factory/issue-7.md", f"{MEMORY_DIR}/{PAGE}"}
     assert not [p for p in tree(remote) if "memory-operations" in p or ".memory-tmp" in p]
     # Every agent, not only the implementer, carries the memory tools and the page name.
-    assert {c.agent for c in calls} >= {"triage", "classifier", "analyst", "reviewer", "pr_writer"}
+    assert {c.agent for c in calls} >= {"triager", "classifier", "analyst", "reviewer", "pr_writer"}
     for call in calls:
         assert "write_memory" in call.memory_tools, call.agent
         assert "search_memory" in call.memory_tools, call.agent
@@ -109,16 +109,16 @@ def test_review_round_two_finds_the_page_round_one_wrote(
 ) -> None:
     seed_branch(remote, tmp_path)
     first = clan_models(
-        decider=[
+        triager=[
             [("write_memory", {"content": "- alice wants guards on every send", "file": PR_PAGE})],
-            *decider(decision(101, "wontfix", "Out of scope.")),
+            *triager(decision(101, "skip", "Out of scope.")),
         ]
     )
     go(cfg, remote, first, PrSession(routes(comments=[review_comment(101)]), remote))
     assert "alice wants guards" in show(remote, f"{MEMORY_DIR}/{PR_PAGE}")
 
     calls: list[Call] = []
-    second = clan_models(calls=calls, decider=decider(decision(201, "wontfix", "Noted.")))
+    second = clan_models(calls=calls, triager=triager(decision(201, "skip", "Noted.")))
     go(cfg, remote, second, PrSession(routes(comments=[review_comment(201)]), remote))
 
     assert PR_PAGE in calls[0].memory and f"`{PR_PAGE}`" in calls[0].instructions
@@ -132,14 +132,14 @@ def test_a_fix_run_still_reaches_memory_through_every_clan(
     calls: list[Call] = []
     models = clan_models(
         calls=calls,
-        decider=decider(decision(101, "fix", "Right.", "Guard it.")),
+        triager=triager(decision(101, "fix_direct", "Right.", "Guard it.")),
         implementer=revisions(0),
         reviewer=[[("submit", REVIEW)]],
     )
 
     go(cfg, remote, models, PrSession(routes(comments=[review_comment(101)]), remote))
 
-    assert [c.agent for c in calls] == ["decider", "implementer", "reviewer"]
+    assert [c.agent for c in calls] == ["triager", "implementer", "reviewer"]
     assert all("write_memory" in c.memory_tools for c in calls)
 
 

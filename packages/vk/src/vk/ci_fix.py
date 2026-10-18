@@ -121,7 +121,6 @@ def _attempt(
         CiDiagnosis,
         agent_instructions(cfg, "ci_diagnoser"),
         "\n\n".join([*context, section("Failed checks", json.dumps(failure, indent=2))]),
-        [],
     )
     first_line = (diagnosis.summary.strip().splitlines() or [""])[0]
     log.info("ci diagnosis: %s", first_line[:120])

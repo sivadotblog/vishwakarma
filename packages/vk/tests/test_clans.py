@@ -53,9 +53,6 @@ def test_run_clan_returns_the_clan_output_model() -> None:
         "priority": "high",
         "complexity": "small",
         "affected_area": "api",
-        "actionable": True,
-        "needs_clarification": False,
-        "questions": [],
         "summary": "Reset emails are sent twice.",
     }
     seen: list[str] = []
