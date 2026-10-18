@@ -56,6 +56,10 @@ class Item:
         """The id the decider sees and answers with: reviews are negated so they never collide."""
         return self.id if self.kind == "inline" else -self.id
 
+    @property
+    def name(self) -> str:
+        return f"{'review' if self.kind == 'review' else 'comment'} {self.id}"
+
     def label(self) -> str:
         if self.kind == "review":
             return f"Review {self.id} by @{self.author}"
@@ -63,11 +67,20 @@ class Item:
         return f"Comment {self.id}{where} by @{self.author}"
 
 
-def _unanswered(ops: PrOps, ctx: dict[str, Any]) -> tuple[list[Item], int]:
+@dataclass(frozen=True)
+class Repeat:
+    """An item that repeats an earlier one word for word; code answers it, no model call."""
+
+    item: Item
+    of: Item
+
+
+def _unanswered(ops: PrOps, ctx: dict[str, Any]) -> tuple[list[Item], list[Repeat], int]:
     """Unanswered inline comments, then unanswered review bodies, from trusted people only.
 
     Anyone can comment on a public repo's PR, so words from other authors never reach an
-    agent. Returns the items and how many were skipped for that reason.
+    agent. Returns the items for the decider, the repeats of an earlier item (answered by code,
+    see `_split_repeats`), and how many comments were skipped as untrusted.
     """
     me = ops.gh.me()
     trusted = ops.trusted
@@ -121,7 +134,27 @@ def _unanswered(ops: PrOps, ctx: dict[str, Any]) -> tuple[list[Item], int]:
             continue
         if allowed(user.get("login", "unknown"), user.get("type"), f"review {r['id']}"):
             items.append(Item(r["id"], "review", user["login"], body))
-    return items, skipped
+    items, repeats = _split_repeats(items)
+    return items, repeats, skipped
+
+
+def _split_repeats(items: list[Item]) -> tuple[list[Item], list[Repeat]]:
+    """Keep the earliest of identical items; later copies become repeats of it.
+
+    Items are identical when the same author sent the same text (whitespace aside) as a review
+    body, or as an inline comment on the same path and line.
+    """
+    first: dict[tuple[object, ...], Item] = {}
+    keep, repeats = [], []
+    for item in items:  # GitHub lists comments and reviews oldest first
+        text = " ".join(item.body.split())
+        where = (item.path, item.line) if item.kind == "inline" else ()
+        original = first.setdefault((item.kind, item.author, *where, text), item)
+        if original is item:
+            keep.append(item)
+        else:
+            repeats.append(Repeat(item, original))
+    return keep, repeats
 
 
 def _render_item(item: Item) -> str:
@@ -216,7 +249,7 @@ def run_review(
     """
     ops = PrOps(gh, caller, confirm, pr_number)
     ctx = ops.context()
-    items, skipped = _unanswered(ops, ctx)
+    items, repeats, skipped = _unanswered(ops, ctx)
     ignored = f" Ignored {skipped} from untrusted authors." if skipped else ""
     if not items:
         return f"No unanswered review comments on PR #{pr_number}; nothing to do.{ignored}"
@@ -242,7 +275,9 @@ def run_review(
         notebook = load_notebook(cfg, issue, head, remote_url)
         try:
             stages = Stages(cfg, model, remote_url, notebook)
-            summary = _handle(cfg, ops, stages, pr, issue, items, log_file["content"], head, base)
+            summary = _handle(
+                cfg, ops, stages, pr, issue, items, repeats, log_file["content"], head, base
+            )
         finally:
             notebook.close()
         summary += ignored
@@ -263,6 +298,7 @@ def _handle(
     pr: dict[str, Any],
     issue: int,
     items: list[Item],
+    repeats: list[Repeat],
     run_log: str,
     head: str,
     base: str,
@@ -325,9 +361,17 @@ def _handle(
     sha = ops.context()["pull_request"]["head"]["sha"]
 
     failed = 0
+    posted = set()
     for item in items:
-        if not _post_reply(ops, item, _reply_text(item, decided[item.ref], loop, sha)):
+        if _post_reply(ops, item, _reply_text(item, decided[item.ref], loop, sha)):
+            posted.add(item.ref)
+        else:
             failed += 1
+    for repeat in repeats:  # only once the item they point to has its answer
+        text = f"This repeats {repeat.of.name}, answered there."
+        if repeat.of.ref in posted and _post_reply(ops, repeat.item, text):
+            continue
+        failed += 1
     if loop and not loop.approved:
         ops.comment(
             f"The reviewer still has findings on the fix for the review comments, after "
@@ -339,7 +383,7 @@ def _handle(
     notes = "\n".join(
         f"- {i.label()}: {decided[i.ref].decision}. {' '.join(decided[i.ref].reason.split())}"
         for i in items
-    )
+    ) + "".join(f"\n- {r.item.label()}: repeats {r.of.name}; answered there." for r in repeats)
     args: dict[str, Any] = {"issue_number": issue, "branch": head, "mode": "append", "notes": notes}
     if loop:
         args["implementation"] = loop.implementation.model_dump(mode="json", by_alias=True)
@@ -350,9 +394,10 @@ def _handle(
         raise StageFailed("run log", exc) from exc
 
     fixed = len(fixes) if loop and loop.approved else 0
+    total = len(items) + len(repeats)
     summary = (
-        f"Answered {len(items) - failed} of {len(items)} item(s) on PR #{ops.number}: "
-        f"{fixed} fixed, {len(items) - len(fixes)} explained"
+        f"Answered {total - failed} of {total} item(s) on PR #{ops.number}: "
+        f"{fixed} fixed, {total - len(fixes)} explained"
     )
     if loop and not loop.approved:
         summary += f", {len(fixes)} fix(es) pushed but the reviewer still has findings"

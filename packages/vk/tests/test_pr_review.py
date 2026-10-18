@@ -24,6 +24,7 @@ from .helpers import (
     Call,
     FakeSession,
     PrSession,
+    Resp,
     branch_sha,
     clan_models,
     implementer_turns,
@@ -493,3 +494,91 @@ def test_an_inline_id_and_a_review_id_that_match_get_separate_replies(
     log = run_log(remote)
     assert "Comment 77 on a.py:3 by @alice: wontfix. Inline answer." in log
     assert "Review 77 by @alice: wontfix. Review answer." in log
+
+
+def test_identical_reviews_cost_one_decision_and_each_gets_a_reply(
+    cfg: Config, remote: Path, tmp_path: Path
+) -> None:
+    seed_branch(remote, tmp_path)
+    calls: list[Call] = []
+    reviews = [
+        review(10, "Please rename x.", state="COMMENTED"),
+        review(11, "Please  rename\nx.  "),  # same text, whitespace aside
+        review(12, "Please rename x."),
+    ]
+    models = clan_models(
+        calls=calls, decider=decider(decision(-10, "wontfix", "The name matches the module."))
+    )
+    session = FakeSession(routes(reviews=reviews))
+
+    summary = go(cfg, remote, models, session)
+
+    assert len(calls) == 1
+    assert "Item -10" in calls[0].prompt
+    assert "Item -11" not in calls[0].prompt and "Item -12" not in calls[0].prompt
+    posted = session.posts(PR_COMMENTS)
+    markers = [p["body"].split("\n")[0] for p in posted]
+    assert markers == [REPLY_MARKER.format(i) for i in (10, 11, 12)]
+    assert "The name matches the module." in posted[0]["body"]
+    for later in posted[1:]:
+        assert "This repeats review 10, answered there." in later["body"]
+    assert "Answered 3 of 3 item(s)" in summary
+    log = run_log(remote)
+    assert "Review 11 by @alice: repeats review 10; answered there." in log
+
+    again = FakeSession(
+        routes(
+            reviews=reviews,
+            issue_comments=[{"user": {"login": "vk-bot"}, **p} for p in posted],
+        )
+    )
+    assert "nothing to do" in go(cfg, remote, no_model, again)
+    assert not writes(again)
+
+
+def test_identical_inline_comments_repeat_only_for_same_author_path_and_line(
+    cfg: Config, remote: Path, tmp_path: Path
+) -> None:
+    seed_branch(remote, tmp_path)
+    calls: list[Call] = []
+    comments = [
+        comment(101, body="Add a guard"),
+        comment(102, body="Add  a guard"),  # repeat of 101
+        comment(103, body="Add a guard", line=9),  # other line
+        comment(104, body="Add a guard", path="b.py"),  # other path
+        comment(105, user="owner", body="Add a guard"),  # other author
+    ]
+    models = clan_models(
+        calls=calls,
+        decider=decider(*(decision(i, "wontfix", f"No {i}.") for i in (101, 103, 104, 105))),
+    )
+    session = FakeSession(routes(comments=comments))
+
+    go(cfg, remote, models, session)
+
+    assert "Item 102" not in calls[0].prompt
+    for item in (101, 103, 104, 105):
+        assert f"Item {item}:" in calls[0].prompt
+    sent = replies(session)
+    assert sent["/repos/o/r/pulls/9/comments/102/replies"] == (
+        "This repeats comment 101, answered there."
+    )
+    assert len(sent) == 5
+
+
+def test_a_repeat_is_not_answered_when_its_original_could_not_be_answered(
+    cfg: Config, remote: Path, tmp_path: Path
+) -> None:
+    seed_branch(remote, tmp_path)
+    reviews = [review(10, "Please rename x."), review(11, "Please rename x.")]
+    models = clan_models(decider=decider(decision(-10, "wontfix", "Fine as is.")))
+
+    class Failing(FakeSession):
+        def request(self, method: str, url: str, **kw: Any) -> Any:  # type: ignore[override]
+            if method == "POST" and url.endswith(PR_COMMENTS):
+                return Resp(500, {"message": "boom"})
+            return super().request(method, url, **kw)
+
+    summary = go(cfg, remote, models, Failing(routes(reviews=reviews)))
+
+    assert "Answered 0 of 2" in summary and "2 reply(ies) failed" in summary

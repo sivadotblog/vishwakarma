@@ -43,6 +43,7 @@ whenever stdin is not a terminal.
 ```bash
 vk issue 42      # triage, plan, implement, review, open a draft PR (Closes #42)
 vk review 57     # answer review comments on a factory PR, push fixes, log the round
+                 # (an identical repeat of an earlier review is answered by code, not the model)
 vk ci-fix 57     # fix failing CI on a factory PR (at most 2 attempts)
 ```
 

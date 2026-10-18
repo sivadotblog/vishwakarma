@@ -98,6 +98,8 @@ A model can no longer post, label or open a PR on its own: the pipelines call th
   1. read the branch's `docs/factory/issue-<N>.md` and memory
   2. list review comments and review bodies from trusted people that the factory hasn't
      replied to yet (nothing unanswered: no model call, no post)
+     (identical text from the same author, on the same line for inline comments, goes to the
+     decider once; code answers each later copy with "this repeats ...", no model call)
   3. the `decider` rules fix / won't-fix with a reason for each one
   4. run implementer-revision → reviewer for the fixable batch on the same branch (≤2 cycles)
   5. code replies in each comment's thread (fix: commit and change summary; won't-fix: the
