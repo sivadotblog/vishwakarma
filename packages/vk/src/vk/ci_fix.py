@@ -18,6 +18,7 @@ from vk.pipeline import (
     PrOps,
     StageFailed,
     Stages,
+    StageWrapper,
     agent_instructions,
     dump,
     implement_and_review,
@@ -42,11 +43,13 @@ def run_ci_fix(
     confirm: Confirm | None = None,
     model: ModelFactory | None = None,
     remote_url: str | None = None,
+    stage_wrapper: StageWrapper | None = None,
 ) -> str:
     """Try to fix failing CI on factory PR `pr_number`; returns a summary.
 
     Green checks, or a failure that is not on the current head, end the run without a post.
     `model` and `remote_url` are test seams.
+    `stage_wrapper` runs each stage, for example as a Prefect task.
     """
     ops = PrOps(gh, caller, confirm, pr_number)
     ctx = ops.context()
@@ -82,7 +85,7 @@ def run_ci_fix(
         # Memory is per issue, so a PR that names none runs without it.
         notebook = load_notebook(cfg, int(closes.group(1)), head, remote_url) if closes else None
         try:
-            stages = Stages(cfg, model, remote_url, notebook)
+            stages = Stages(cfg, model, remote_url, notebook, stage_wrapper)
             summary = _attempt(cfg, ops, stages, pr, failure, head, base)
         finally:
             if notebook:

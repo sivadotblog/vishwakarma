@@ -7,7 +7,7 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, Protocol
 
 from pydantic import BaseModel
 from pydantic_ai.exceptions import UsageLimitExceeded
@@ -67,6 +67,12 @@ def _attempt[T](stage: str, call: Callable[[], T]) -> T:
         raise StageFailed(stage, exc) from exc
 
 
+class StageWrapper(Protocol):
+    """Runs one whole stage (both attempts) for a caller that wants to observe it."""
+
+    def __call__[T](self, stage: str, call: Callable[[], T], /) -> T: ...
+
+
 @dataclass(frozen=True)
 class Stages:
     """Runs clans and judgment agents with the shared retry rule and test seams."""
@@ -75,19 +81,26 @@ class Stages:
     model: ModelFactory | None = None
     remote_url: str | None = None
     notebook: Notebook | None = None  # the run's memory, attached to every agent
+    wrap: StageWrapper | None = None  # runs each stage, for example as a Prefect task
+
+    def _run[T](self, name: str, call: Callable[[], T]) -> T:
+        return self.wrap(name, call) if self.wrap else call()
 
     def clan[T: BaseModel](self, name: str, message: str, out: type[T]) -> T:
         nb = self.notebook
-        result = _attempt(
+        result = self._run(
             name,
-            lambda: run_clan(
+            lambda: _attempt(
                 name,
-                message,
-                self.cfg,
-                model=self.model,
-                remote_url=self.remote_url,
-                capabilities=nb.capabilities() if nb else (),
-                extra_instructions=nb.instructions if nb else "",
+                lambda: run_clan(
+                    name,
+                    message,
+                    self.cfg,
+                    model=self.model,
+                    remote_url=self.remote_url,
+                    capabilities=nb.capabilities() if nb else (),
+                    extra_instructions=nb.instructions if nb else "",
+                ),
             ),
         )
         if not isinstance(result, out):
@@ -100,17 +113,20 @@ class Stages:
         nb = self.notebook
         if nb:
             instructions = f"{instructions.rstrip()}\n\n{nb.instructions}\n"
-        return _attempt(
+        return self._run(
             name,
-            lambda: agents.run_typed(
+            lambda: _attempt(
                 name,
-                out,
-                instructions,
-                message,
-                tools,
-                self.cfg,
-                capabilities=nb.capabilities() if nb else (),
-                model=self.model(name) if self.model else None,
+                lambda: agents.run_typed(
+                    name,
+                    out,
+                    instructions,
+                    message,
+                    tools,
+                    self.cfg,
+                    capabilities=nb.capabilities() if nb else (),
+                    model=self.model(name) if self.model else None,
+                ),
             ),
         )
 
@@ -421,10 +437,12 @@ def run_issue(
     confirm: Confirm | None = None,
     model: ModelFactory | None = None,
     remote_url: str | None = None,
+    stage_wrapper: StageWrapper | None = None,
 ) -> str:
     """Take issue `number` from triage to a draft pull request; returns the closing summary.
 
     `model` (agent name -> PydanticAI model) and `remote_url` are test seams.
+    `stage_wrapper` runs each stage, for example as a Prefect task.
     """
     ops = IssueOps(gh, caller, confirm, number)
     started = time.monotonic()
@@ -442,7 +460,7 @@ def run_issue(
     try:
         notebook = load_notebook(cfg, number, "HEAD", remote_url)
         try:
-            stages = Stages(cfg, model, remote_url, notebook)
+            stages = Stages(cfg, model, remote_url, notebook, stage_wrapper)
             summary = _run(cfg, ops, stages, caller, number, issue, on_issue)
         finally:
             notebook.close()
