@@ -88,3 +88,42 @@ The implementation successfully restructures the Astro Starlight documentation s
 - pass: Existing pages are moved, not duplicated, and no internal link is broken. (`guides/getting-started.md` was relocated to `getting-started/index.md` (and expanded with real content), `reference/status-labels.md` was moved via git rename to `api-reference/status-labels.md`, and the hero link in `index.mdx` was updated to `getting-started/`. `astro build` generated 12 static HTML routes cleanly with no missing pages or broken internal links.)
 - pass: Facts match the code: commands, env var names and file paths must exist in the repo. (All commands (`make setup`, `make check`, `uv sync --locked`, `npm ci`, `ruff check`, `mypy --strict`, `pytest`, `astro check`, `astro build`, `vk issue`, `vk review`, `vk ci-fix`), environment variables (`GITHUB_TOKEN`, `VK_MODEL`, `VK_MODEL_<CLAN>`, `VK_REPO`, `VK_SETUP_COMMAND`, `VK_BRANCH_PREFIX`, `VK_STATE_DIR`, `VK_MAX_OUTPUT_TOKENS`, `VK_LOG_LEVEL`), and paths (`apps/web`, `apps/api`, `packages/vk`, `docs/factory/issue-12.md`) exist and match repository files.)
 - pass: `make check` passes (it includes the Astro build). (Executed `make check` from root after running `make setup`. All checks passed: ruff linting, ruff formatting check, mypy strict typechecking, 115 pytest tests, web workspace prettier linting, astro check (0 errors, 0 warnings, 0 hints), and astro static build (12 HTML pages generated).)
+
+## Review round 1
+
+- Review 5561096099 by @sivadotblog: fix. The documentation had references to LiteLLM model syntax and a nonexistent workflow file. Updating the environment tables to match the PydanticAI provider:model runtime and removing the vishwakarma-review section keeps the docs accurate.
+- Review 5561098414 by @sivadotblog: fix. This is a duplicate review comment addressing the same documentation updates. The environment tables and workflow descriptions will be updated accordingly.
+- Review 5561109392 by @sivadotblog: fix. This is a duplicate review comment addressing the same documentation updates. The environment tables and workflow descriptions will be updated accordingly.
+
+### Changes
+
+Branch `vk/feature-restructure-docs` (base `main`).
+
+### Change summary
+
+- `apps/web/src/content/docs/advanced/index.md`: Updated VK_MODEL description to reference PydanticAI provider:model syntax, expanded VK_MODEL_<CLAN> list to all clans, added VK_BOT_LOGIN, and updated local execution model export.
+- `apps/web/src/content/docs/api-reference/index.md`: Updated VK_MODEL and VK_MODEL_<CLAN> descriptions and added VK_BOT_LOGIN row to environment variable reference table.
+- `apps/web/src/content/docs/how-to-guides/index.md`: Replaced LiteLLM references with PydanticAI, updated model examples to provider:model syntax, and expanded per-clan overrides list.
+- `apps/web/src/content/docs/integrations/index.md`: Replaced LiteLLM references with PydanticAI, removed obsolete vishwakarma-review.yml section, and updated provider model examples to provider:model syntax.
+- `apps/web/src/content/docs/release-notes/index.md`: Updated core capabilities section to reference PydanticAI instead of LiteLLM.
+
+### Verification
+
+- `make check`: pass: ruff linting, ruff formatting, mypy strict typechecking (35 files), pytest (205 passed), web prettier check, astro check (0 errors, 0 warnings), astro static build (12 pages generated) all passed.
+
+### Deviations
+
+- None
+
+### Review
+
+Verdict: **approve**
+
+All review comments from PR #18 have been correctly addressed. Environment configuration matrices and model configuration guides now accurately reflect the PydanticAI runtime syntax (`provider:model`) and list all nine agent clans along with `VK_BOT_LOGIN`. The obsolete `vishwakarma-review.yml` workflow section was removed, and `make check` passed cleanly across all Python and Astro web workspace checks.
+
+### Criteria results
+
+- pass: Item -5561096099: Update environment configuration tables across documentation files to PydanticAI provider:model syntax, include all 9 agent clans, add VK_BOT_LOGIN, and remove obsolete vishwakarma-review.yml section. (In `apps/web/src/content/docs/advanced/index.md`, `api-reference/index.md`, `how-to-guides/index.md`, and `integrations/index.md`, LiteLLM references were replaced with PydanticAI `provider:model` string format (e.g. `google:gemini-3.5-flash`, `anthropic:claude-3-5-sonnet`). The `VK_MODEL_<CLAN>` variables now explicitly list all 9 agent clans (CLASSIFIER, RESEARCHER, ANALYST, IMPLEMENTER, REVIEWER, TRIAGE, PR_WRITER, DECIDER, CI_DIAGNOSER). The `VK_BOT_LOGIN` row was added to environment matrices. The nonexistent `vishwakarma-review.yml` section was removed from `integrations/index.md`.)
+- pass: Item -5561098414: Duplicate review request covering environment table updates and vishwakarma-review section removal. (Addressed by the exact same set of changes across `advanced/index.md`, `api-reference/index.md`, `how-to-guides/index.md`, and `integrations/index.md`.)
+- pass: Item -5561109392: Duplicate review request covering environment table updates and vishwakarma-review section removal. (Addressed by the exact same set of changes across `advanced/index.md`, `api-reference/index.md`, `how-to-guides/index.md`, and `integrations/index.md`.)
+- pass: Verification: make check passes cleanly including Python linting, formatting, mypy, pytest, prettier, astro check, and astro build. (Executed `make check` from root after `make setup`. Ruff linting, ruff formatting check, mypy strict typechecking (35 source files), 205 pytest tests, web workspace prettier check, astro check (0 errors, 0 warnings), and astro static build (12 static HTML routes generated) all passed without error.)
