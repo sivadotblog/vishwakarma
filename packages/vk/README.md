@@ -29,6 +29,7 @@ on the PATH.
 | `VK_BOT_LOGIN`              | Optional login VK acts as, e.g. `my-app[bot]`; default is `GET /user`. Required for GitHub App tokens, which cannot call `/user`. Commits are authored as this bot user (looked up via `GET /users/{login}`); if that fails, as `vk[bot]`. |
 | `VK_STATE_DIR`              | Default `~/.vk` (artifacts, clones, user preferences).     |
 | `VK_MAX_OUTPUT_TOKENS`      | Output token budget per agent run, default 100000.         |
+| `VK_MAX_INPUT_TOKENS`       | Input token budget per agent run, default 2000000. Input is re-sent on every turn, so it grows fastest; one implementer run on #17 used about 1.05M. Exceeding either budget exits 3. |
 | `VK_LOG_LEVEL`              | Log level for stderr logs (incl. token usage), default `INFO`. |
 
 A gateway such as Kong can be added later in `build_model` (`config.py`), the one place that turns
@@ -46,7 +47,7 @@ vk ci-fix 57     # fix failing CI on a factory PR (at most 2 attempts)
 ```
 
 The run log is committed to the PR branch as `docs/factory/issue-<N>.md`. Exit codes: 0 success,
-2 configuration error, 3 token budget exceeded.
+2 configuration error, 3 token budget exceeded (input or output).
 
 ## Memory
 
@@ -87,7 +88,8 @@ Issue and PR text is untrusted input. `vk` only passes on, and acts on, comments
 issue author, VK itself, and collaborators with triage permission or higher. `vk review` handles
 review comments from those collaborators only; comments from outsiders and other bots are
 ignored and never reach an agent. Repository code is read only by the clans, from their local
-clone. The judgment agents decide from what code hands them: `decider`, `ci_diagnoser` and
+clone. Every tool result is capped at 30,000 characters (with a truncation note), because each one
+is re-sent on every later turn. The judgment agents decide from what code hands them: `decider`, `ci_diagnoser` and
 `pr_writer` have no tools, and `triage` has only the read-only issue and label tools. Every GitHub
 write comes from code, through the approval policies.
 

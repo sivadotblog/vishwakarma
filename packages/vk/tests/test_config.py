@@ -74,3 +74,9 @@ def test_every_agent_can_have_a_model_override(agent: str) -> None:
     cfg = load_config({**env, f"VK_MODEL_{agent}": "anthropic:x"})
     assert cfg.model_for(agent.lower()) == "anthropic:x"
     assert cfg.model_for("implementer") == "google:m"
+
+
+def test_input_token_budget_comes_from_the_environment() -> None:
+    env = {"GITHUB_TOKEN": "t", "VK_MODEL": "test:m", "VK_REPO": "o/r"}
+    assert load_config(env).max_input_tokens == 2_000_000
+    assert load_config({**env, "VK_MAX_INPUT_TOKENS": "5000"}).max_input_tokens == 5000

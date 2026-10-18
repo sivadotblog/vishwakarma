@@ -330,12 +330,12 @@ def _specs() -> list[Spec]:
         ),
         Spec(
             "getRepositoryTree",
-            "List the repository file tree at a ref.",
+            "List the repository file tree at a ref. Not recursive unless `recursive` is true.",
             s([], ref="string", recursive="boolean"),
             lambda gh, a: gh.request(
                 "GET",
                 gh.repo(f"/git/trees/{quote(a.get('ref', 'HEAD'))}"),
-                params={"recursive": "1"} if a.get("recursive", True) else None,
+                params={"recursive": "1"} if a.get("recursive", False) else None,
             ),
         ),
         Spec(

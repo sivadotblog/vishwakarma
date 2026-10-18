@@ -14,6 +14,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from vk.config import Config, build_model
 from vk.tooling import Tool
+from vk.tools import MAX_OUTPUT_CHARS, truncate
 
 log = logging.getLogger(__name__)
 
@@ -29,7 +30,9 @@ def adapt(tool: Tool) -> AiTool[None]:
         except Exception as exc:  # tool failures are model-visible by design
             log.warning("tool %s failed: %s", tool.name, exc)
             raise ToolFailed(str(exc)) from exc
-        return result if isinstance(result, str) else json.dumps(result, default=str)
+        text = result if isinstance(result, str) else json.dumps(result, default=str)
+        # Every tool result is re-sent on each later turn, so no single one may be unbounded.
+        return truncate(text, MAX_OUTPUT_CHARS)
 
     return AiTool.from_schema(
         function=call,
@@ -75,7 +78,9 @@ def run_typed[T](
                 message,
                 usage=usage,
                 usage_limits=UsageLimits(
-                    output_tokens_limit=cfg.max_output_tokens, request_limit=None
+                    input_tokens_limit=cfg.max_input_tokens,
+                    output_tokens_limit=cfg.max_output_tokens,
+                    request_limit=None,
                 ),
             )
         except Exception as exc:

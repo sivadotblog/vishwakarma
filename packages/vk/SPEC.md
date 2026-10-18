@@ -10,7 +10,7 @@ PydanticAI that works with any provider PydanticAI supports.
 
 | Concern | Implementation |
 |---|---|
-| Agent runtime | PydanticAI: one `Agent` per clan and per judgment agent (`triage`, `pr_writer`, `decider`, `ci_diagnoser`), each with a typed Pydantic output (`ToolOutput`, 3 output retries); `agents.run_typed` runs it under an output-token budget |
+| Agent runtime | PydanticAI: one `Agent` per clan and per judgment agent (`triage`, `pr_writer`, `decider`, `ci_diagnoser`), each with a typed Pydantic output (`ToolOutput`, 3 output retries); `agents.run_typed` runs it under input and output token budgets; every tool result is capped at 30,000 characters |
 | Models | Native `provider:model` strings (`google:gemini-3.5-flash`): env `VK_MODEL`, overridden per agent with `VK_MODEL_<AGENT>`. `build_model` is the one place a gateway such as Kong can be added later |
 | Intake | CLI subcommands calling `pipeline.run_issue`, `pr_review.run_review`, `ci_fix.run_ci_fix` |
 | Control flow | Python: status labels, progress comments, the clarification stop, the ≤2 revision loop, run-log and memory commits, the draft PR, every review reply. Repository code is read only by clans, from their clone; judgment agents decide from their message (`decider`, `ci_diagnoser` and `pr_writer` have no tools, `triage` only issue and label reads). Every GitHub write goes through the guarded `github__*` tools from code |
@@ -59,7 +59,7 @@ One package, built in this order. Arrows point one way.
 |---|---|---|
 | `config` | Env/CLI config, repo detection from `origin`, state dir, `build_model` | — |
 | `models` | Pydantic output types for every agent (`Classification` … `Review`, `Triage`, `CommentDecision`, `PrBody`, `CiDiagnosis`) | — |
-| `agents` | PydanticAI runtime: adapts VK tools, `run_typed` with retries and the token budget | config, models |
+| `agents` | PydanticAI runtime: adapts VK tools, `run_typed` with retries and the token budgets | config, models |
 | `tools` | Harness tools (bash, read_file, write_file, edit_file, glob, grep, web_fetch), artifacts, preferences, skills loader | config |
 | `git` | Clone per clan, `checkout_branch`, `push_branch`, `validate_branch` | config |
 | `github` | REST client + `github__*` tool wrappers + approval policies | config |
@@ -138,7 +138,7 @@ Env: `GITHUB_TOKEN` (required), `VK_MODEL` (required, native `provider:model`),
 `VK_MODEL_<AGENT>` (`CLASSIFIER`, `RESEARCHER`, `ANALYST`, `IMPLEMENTER`, `REVIEWER`, `TRIAGE`,
 `PR_WRITER`, `DECIDER`, `CI_DIAGNOSER`), `GEMINI_API_KEY` (or the provider's standard key),
 `VK_BOT_LOGIN`, `VK_REPO`, `VK_SETUP_COMMAND`, `VK_BRANCH_PREFIX` (`vk/`), `VK_STATE_DIR`
-(`~/.vk`), `VK_MAX_OUTPUT_TOKENS` (100000), `VK_LOG_LEVEL` (`INFO`; logs go to stderr).
+(`~/.vk`), `VK_MAX_OUTPUT_TOKENS` (100000), `VK_MAX_INPUT_TOKENS` (2000000), `VK_LOG_LEVEL` (`INFO`; logs go to stderr).
 Exit codes: 0 success, 2 configuration error, 3 token budget exceeded.
 
 ## Project Structure

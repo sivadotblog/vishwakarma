@@ -54,7 +54,8 @@ def _str_arg(args: dict[str, Any], key: str, *, required: bool = True) -> str:
     return value
 
 
-def _truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
+def truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
+    """Cut `text` to `limit` characters, saying how much was dropped."""
     if len(text) <= limit:
         return text
     return text[:limit] + f"\n... [truncated {len(text) - limit} characters]"
@@ -99,8 +100,8 @@ def _bash(repo_dir: Path) -> Tool:
             raise ToolError(f"Command timed out after {BASH_TIMEOUT_S}s.") from None
         return {
             "exit_code": proc.returncode,
-            "stdout": _truncate(proc.stdout),
-            "stderr": _truncate(proc.stderr),
+            "stdout": truncate(proc.stdout),
+            "stderr": truncate(proc.stderr),
         }
 
     return Tool(
@@ -121,7 +122,7 @@ def _read_file(repo_dir: Path) -> Tool:
         limit = min(int(args.get("limit") or MAX_READ_LINES), MAX_READ_LINES)
         chunk = lines[offset - 1 : offset - 1 + limit]
         numbered = "\n".join(f"{offset + i}\t{line}" for i, line in enumerate(chunk))
-        return {"content": _truncate(numbered), "total_lines": len(lines)}
+        return {"content": truncate(numbered), "total_lines": len(lines)}
 
     return Tool(
         "read_file",
@@ -330,7 +331,7 @@ def _web_fetch() -> Tool:
         return {
             "status": status,
             "content_type": content_type,
-            "content": _truncate(text, MAX_WEB_CHARS),
+            "content": truncate(text, MAX_WEB_CHARS),
             "truncated": len(body) > MAX_WEB_BYTES or len(text) > MAX_WEB_CHARS,
         }
 
