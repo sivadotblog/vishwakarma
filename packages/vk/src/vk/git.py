@@ -247,6 +247,11 @@ def read_files(
     Fetches only that one commit (no checkout, no setup command), so it is cheap enough to
     run at the start of every run. `ref` may be a branch name or `HEAD` (the default branch).
     """
+    if ref != "HEAD" and (
+        not BRANCH_PATTERN.fullmatch(ref) or ".." in ref or "//" in ref or ref.startswith("refs/")
+    ):
+        # A read, so unlike `validate_branch` it allows main; the ref is PR-author controlled.
+        raise GitError(f'"{ref}" is not a valid ref to read.')
     parent = cfg.state_dir / "work"
     parent.mkdir(parents=True, exist_ok=True)
     scratch = Path(tempfile.mkdtemp(prefix="snapshot-", dir=parent))

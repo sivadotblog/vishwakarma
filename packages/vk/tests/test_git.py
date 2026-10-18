@@ -173,6 +173,35 @@ def test_read_files_filters_and_reads_a_branch_or_the_default(tmp_path: Path, re
         read_files(cfg, "vk/missing", "m", wanted, remote_url=remote)
 
 
+@pytest.mark.parametrize("ref", ["--upload-pack=x", "-x", "a..b", "a//b", "refs/heads/main", ""])
+def test_read_files_refuses_unsafe_refs_without_running_git(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ref: str
+) -> None:
+    def no_git(*_args: object, **_kw: object) -> None:
+        raise AssertionError("git must not run")
+
+    monkeypatch.setattr(subprocess, "run", no_git)
+    with pytest.raises(GitError, match="not a valid ref"):
+        read_files(make_cfg(tmp_path), ref, "m", lambda _p: True, remote_url="file:///x")
+    assert not (tmp_path / "state").exists()
+
+
+@pytest.mark.parametrize("ref", ["HEAD", "main", "vk/bug-x"])
+def test_read_files_accepts_head_and_plain_branch_names(
+    tmp_path: Path, remote: str, ref: str
+) -> None:
+    cfg = make_cfg(tmp_path)
+    if ref != "main" and ref != "HEAD":
+        repo = clone_repo(cfg, remote_url=remote)
+        sh("git", "checkout", "-b", ref, cwd=repo)
+        commit_files(repo, ref, {"m/a.md": "A\n"}, "add")
+        push_branch(cfg, repo, ref, remote_url=remote)
+
+    files = read_files(cfg, ref, "m", lambda _p: True, remote_url=remote)
+
+    assert files == ({"m/a.md": "A"} if ref == "vk/bug-x" else {})
+
+
 def test_git_tools_surface(tmp_path: Path) -> None:
     cfg = make_cfg(tmp_path)
     assert [t.name for t in git_tools(cfg, tmp_path, allow_push=False)] == ["checkout_branch"]
