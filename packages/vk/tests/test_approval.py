@@ -14,6 +14,7 @@ ATTENDED = Caller(unattended=False)
 CASES: list[tuple[str, dict[str, Any], Decision, Decision]] = [
     ("getFileContent", {"path": "a"}, "run", "run"),
     ("listReviewComments", {"pull_number": 1}, "run", "run"),
+    ("getCollaboratorPermission", {"username": "alice"}, "run", "run"),
     ("addLabels", {"issue_number": 9, "labels": ["x"]}, "run", "run"),
     ("removeLabel", {"issue_number": 9, "name": "x"}, "run", "run"),
     ("ensureLabel", {"name": "vk:pr-open"}, "run", "run"),

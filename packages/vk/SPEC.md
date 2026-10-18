@@ -2,31 +2,36 @@
 
 ## Context
 
-Vishwakarma (VK) is a software factory: an orchestrator agent that moves a work item through
-five clans (classifier, researcher, analyst, implementer and reviewer). The result is a
-reviewed draft PR. VK is a lean, pip-installable Python package that works with any LLM
-LiteLLM supports.
+Vishwakarma (VK) is a software factory: Python code that moves a work item through five clans
+(classifier, researcher, analyst, implementer and reviewer), with a triage and a PR-writer
+agent around them. The result is a reviewed draft PR. Code owns the control flow and enforces
+every rule; agents only make judgments. VK is a lean, uv-installable Python package on
+PydanticAI that works with any provider PydanticAI supports.
 
 | Concern | Implementation |
 |---|---|
-| Agent runtime | Own tool-calling loop on `litellm.completion`; structured output through a final `submit` tool whose parameters are the clan's JSON schema |
-| Models | LiteLLM model strings: env `VK_MODEL`, overridden per clan with `VK_MODEL_<CLAN>` |
-| Intake | CLI subcommands, each injecting a fixed task text |
+| Agent runtime | PydanticAI: one `Agent` per clan and per judgment agent (`triage`, `pr_writer`, `decider`, `ci_diagnoser`), each with a typed Pydantic output (`ToolOutput`, 3 output retries); `agents.run_typed` runs it under an output-token budget |
+| Models | Native `provider:model` strings (`google:gemini-3.5-flash`): env `VK_MODEL`, overridden per agent with `VK_MODEL_<AGENT>`. `build_model` is the one place a gateway such as Kong can be added later |
+| Intake | CLI subcommands calling `pipeline.run_issue`, `pr_review.run_review`, `ci_fix.run_ci_fix` |
+| Control flow | Python: status labels, progress comments, the clarification stop, the ≤2 revision loop, run-log and memory commits, the draft PR, every review reply. Agents get read-only GitHub tools; every GitHub write goes through the guarded `github__*` tools from code |
 | GitHub tools | `github.py`: thin REST client on `requests` behind an allowlist, tools named `github__<name>` |
 | Credentials | `GITHUB_TOKEN` env var |
+| Identity | A GitHub App: workflows mint an installation token and set `VK_BOT_LOGIN`, so VK's comments are told apart from people's and its pushes trigger CI |
 | Isolation | A temp-dir clone per clan; the token goes in per-command `git -c http.extraHeader=…`, never into `.git/config`, and every command targets the literal `https://github.com/<repo>.git` URL, never `origin` |
 | Harness | Python tools (bash, read, write, edit, web), run in the clan's clone |
-| Storage (brain, preferences, artifacts) | Plain files under a local state dir |
+| Storage | Per-issue memory (the harness `Memory` capability) committed to the target repo under `docs/factory/memory/issue-<N>/`, plus the run log; artifacts and user preferences are plain files under a local state dir |
 | Approvals | Terminal `y/N` prompt when stdin is a TTY, otherwise denied (unattended) |
 
 Beyond the core pipeline:
 1. **Run log in the PR**: `docs/factory/issue-<N>.md` is committed to the PR branch. It holds
    the classification, the analysis (plan + acceptance criteria), the change summary,
    verification results and the reviewer verdict, plus a new section each review round.
-2. **Review-comment loop**: `vk review <PR>` reads unanswered review comments.
-   For each one it decides fixable or not. Fixable ones go through implementer → reviewer and
-   get pushed to the same branch. Every comment gets a reply: what changed, or why it wasn't
-   changed.
+2. **Review-comment loop**: `vk review <PR>` reads unanswered review comments from trusted
+   people. A `decider` agent rules fix or won't-fix on each one. Fixable ones go through
+   implementer → reviewer and get pushed to the same branch. Code posts a reply to every
+   comment: what changed, or why it wasn't changed.
+3. **Memory**: each agent keeps notes in a per-issue notebook committed with the run log, and
+   reads the other issues' `repo-notes.md` as a read-only brain.
 
 ## Objective
 
@@ -43,7 +48,7 @@ factory:
 
 Later, `vk review <PR>` handles reviewers' comments on that PR.
 
-Users: maintainers of any GitHub repo (this monorepo first), with any LLM provider LiteLLM
+Users: maintainers of any GitHub repo (this monorepo first), with any LLM provider PydanticAI
 supports.
 
 ## Capability map (Phase 0)
@@ -52,16 +57,36 @@ One package, built in this order. Arrows point one way.
 
 | Module id | Responsibility | Depends on |
 |---|---|---|
-| `config` | Env/CLI config, repo detection from `origin`, state dir | — |
-| `llm` | LiteLLM tool-calling loop, structured `submit`, token budget, compaction | config |
-| `tools` | Harness tools (bash, read_file, write_file, edit_file, glob, grep, web_fetch, web_search), artifacts, brain, preferences, skills loader | config |
+| `config` | Env/CLI config, repo detection from `origin`, state dir, `build_model` | — |
+| `models` | Pydantic output types for every agent (`Classification` … `Review`, `Triage`, `CommentDecision`, `PrBody`, `CiDiagnosis`) | — |
+| `agents` | PydanticAI runtime: adapts VK tools, `run_typed` with retries and the token budget | config, models |
+| `tools` | Harness tools (bash, read_file, write_file, edit_file, glob, grep, web_fetch), artifacts, preferences, skills loader | config |
 | `git` | Clone per clan, `checkout_branch`, `push_branch`, `validate_branch` | config |
 | `github` | REST client + `github__*` tool wrappers + approval policies | config |
-| `clans` | 5 clan definitions: prompt `.md`, schema, tool surface, model | llm, tools, git |
-| `orchestrator` | VK prompt, `run_<clan>` tools, `publish_run_log` | clans, github |
-| `cli` | Subcommands + injected task texts (issue / review / ci-fix) | orchestrator |
+| `memory` | Per-issue notebook (harness `Memory`), read-only factory brain, committed `*.md` changes | config, git |
+| `runlog` | Render and commit `docs/factory/issue-<N>.md` and memory | git |
+| `clans` | 5 clan definitions: prompt `.md`, output model, tool surface, model | agents, tools, git |
+| `pipeline` | `run_issue`; shared stages (revision loop, status, trust checks, judgment-agent prompts) | clans, github, memory, runlog |
+| `pr_review` | `run_review`: decider, fix batch, replies, appended round | pipeline |
+| `ci_fix` | `run_ci_fix`: attempt cap, diagnoser, fix as a revision | pipeline |
+| `cli` | Subcommands, exit codes | pipeline, pr_review, ci_fix |
 
-Build order: config → llm, tools, git, github → clans → orchestrator → cli.
+Build order: config, models → agents, tools, git, github → clans, memory, runlog → pipeline →
+pr_review, ci_fix → cli.
+
+## Flow (code owns control flow; agents only judge)
+
+```
+vk issue N:  triage -> classifier -> [researcher] -> analyst
+             -> loop<=2 (implementer -> reviewer) -> publish log+memory -> pr_writer -> draft PR
+vk review P: load run log + memory -> decider (fix|wontfix per comment)
+             -> loop<=2 (implementer -> reviewer) -> replies (code) -> append round + memory
+vk ci-fix P: attempt count (code) -> ci_diagnoser -> implementer -> reviewer
+```
+
+A model can no longer post, label or open a PR on its own: the pipelines call the guarded
+`github__*` tools themselves. A stage that fails is retried once, then the run ends `vk:blocked`
+(issue) or posts an error comment (review, ci-fix). A spent token budget is not retried.
 
 ## Behaviour by command
 
@@ -69,13 +94,17 @@ Build order: config → llm, tools, git, github → clans → orchestrator → c
   deliver a draft PR. Status labels: `vk:in-progress` → `vk:pr-open` |
   `vk:needs-info` | `vk:blocked`. These are created if missing (the one label
   exception, flagged below), alongside the repo-vocabulary labels from the classifier.
-- `vk review <PR>`: modelled on the CI-fix task:
-  1. read the branch's `docs/factory/issue-<N>.md`
-  2. list review comments and review bodies the factory hasn't replied to yet
-  3. for each one, decide fix / won't-fix with a reason
+- `vk review <PR>`:
+  1. read the branch's `docs/factory/issue-<N>.md` and memory
+  2. list review comments and review bodies from trusted people that the factory hasn't
+     replied to yet (nothing unanswered: no model call, no post)
+  3. the `decider` rules fix / won't-fix with a reason for each one
   4. run implementer-revision → reviewer for the fixable batch on the same branch (≤2 cycles)
-  5. reply in each comment's thread
-  6. append a "Review round k" section to the log
+  5. code replies in each comment's thread (fix: commit and change summary; won't-fix: the
+     decider's reason)
+  6. append a "Review round k" section to the log and commit the memory changes
+  The `vishwakarma-review.yml` workflow runs this when a person submits a review on a `vk/*`
+  pull request.
 - `vk ci-fix <PR>`: capped at 2 attempts, counted from
   attempt comments on the PR.
 - `--unattended` is forced when stdin is not a TTY. In that mode, policies deny everything
@@ -86,10 +115,11 @@ Build order: config → llm, tools, git, github → clans → orchestrator → c
 ## Tech Stack
 
 - Python ≥3.12, built with `uv_build` (same as `apps/api`)
-- Runtime deps: **`litellm`** (any LLM) and **`requests`** (GitHub REST, web_fetch). Nothing
-  else. git runs through `subprocess`; HTML→text uses stdlib `html.parser`. JSON-schema
-  checks on `submit` are hand-rolled (required keys, enums, types), so there is no
-  `jsonschema` dependency.
+- Runtime deps: **`pydantic-ai-slim`** (the agent runtime; extras `google` and `anthropic`),
+  **`pydantic-ai-harness`** (the `Memory` capability) and **`requests`** (GitHub REST,
+  web_fetch). git runs through `subprocess`; HTML→text uses stdlib `html.parser`. Tool
+  arguments are not schema-validated beyond what the model API enforces. Output types are
+  Pydantic models validated by PydanticAI.
 - Dev: the existing workspace dev group (ruff, mypy, pytest) + `types-requests`
 
 ## Commands
@@ -97,17 +127,19 @@ Build order: config → llm, tools, git, github → clans → orchestrator → c
 ```
 make setup                                   # uv sync --locked + npm ci (unchanged)
 make check                                   # must pass; covers the new package once added to the workspace
-uv run vk issue 42             # run from inside a checkout of the target repo
-uv run vk review 57
-uv run vk ci-fix 57
+uv run --package vk vk issue 42   # run from inside a checkout of the target repo
+uv run --package vk vk review 57
+uv run --package vk vk ci-fix 57
 uv run pytest packages/vk      # package tests only
 uv add --package vk <pkg>      # deps (needs a justification in the PR)
 ```
 
-Env: `GITHUB_TOKEN` (required), `VK_MODEL` (required), `VK_MODEL_<CLAN>`,
-the provider's API key under LiteLLM's standard name, `VK_SETUP_COMMAND`,
-`VK_BRANCH_PREFIX` (`vk/`), `VK_STATE_DIR` (`~/.vk`),
-`VK_MAX_OUTPUT_TOKENS` (100000), `VK_LOG_LEVEL` (`INFO`; logs go to stderr).
+Env: `GITHUB_TOKEN` (required), `VK_MODEL` (required, native `provider:model`),
+`VK_MODEL_<AGENT>` (`CLASSIFIER`, `RESEARCHER`, `ANALYST`, `IMPLEMENTER`, `REVIEWER`, `TRIAGE`,
+`PR_WRITER`, `DECIDER`, `CI_DIAGNOSER`), `GEMINI_API_KEY` (or the provider's standard key),
+`VK_BOT_LOGIN`, `VK_REPO`, `VK_SETUP_COMMAND`, `VK_BRANCH_PREFIX` (`vk/`), `VK_STATE_DIR`
+(`~/.vk`), `VK_MAX_OUTPUT_TOKENS` (100000), `VK_LOG_LEVEL` (`INFO`; logs go to stderr).
+Exit codes: 0 success, 2 configuration error, 3 token budget exceeded.
 
 ## Project Structure
 
@@ -116,10 +148,11 @@ packages/vk/
   pyproject.toml            # name=vk, script vk = vk.cli:main
   README.md  SPEC.md
   src/vk/
-    cli.py  config.py  llm.py  git.py  github.py  approval.py
-    tools.py                # harness + artifacts + brain + preferences + skills
-    orchestrator.py  clans.py  runlog.py  schemas.py
-    prompts/                # vk.md + {classifier,researcher,analyst,implementer,reviewer}.md
+    cli.py  config.py  agents.py  models.py  git.py  github.py  approval.py
+    tools.py                # harness + artifacts + preferences + skills
+    clans.py  pipeline.py  pr_review.py  ci_fix.py  memory.py  runlog.py
+    prompts/                # {classifier,researcher,analyst,implementer,reviewer}.md
+                            # + {triage,pr_writer,decider,ci_diagnoser}.md, shared style.md
     skills/                 # triaging-issues/, writing-quality/ (incl. references/)
   tests/                    # test_*.py, no network
 ```
@@ -149,22 +182,25 @@ def validate_branch(branch: str) -> str | None:
 
 ## Testing Strategy
 
-- pytest, plain functions, no network. `llm.run_agent` takes an injectable `complete` callable,
-  so tests script LLM turns. The GitHub client takes an injectable `requests.Session`, faked
+- pytest, plain functions, no network (`ALLOW_MODEL_REQUESTS = False` in `conftest.py`). The
+  pipelines take a per-agent-name model factory, so tests script each agent with a
+  PydanticAI `FunctionModel`. The GitHub client takes an injectable `requests.Session`, faked
   with a tiny stub (no `responses` dep).
-- Unit: `validate_branch`, approval policies (truth table per caller class), artifact-id containment, harness tools in `tmp_path`,
-  schema validation in `submit`, run-log rendering.
-- Pipeline: a scripted fake LLM + fake GitHub + a local bare git repo as the "remote" drives
-  `issue` end to end (labels, push, run-log commit, draft PR) and `review` (fix one comment,
-  explain another, replies posted).
+- Unit: `validate_branch`, approval policies (truth table per caller class), artifact-id
+  containment, harness tools in `tmp_path`, tool adapter and output retries, token budget,
+  `load_config` model-format checks, run-log rendering, memory notebooks.
+- Pipeline: scripted fake models + fake GitHub + a local bare git repo as the "remote" drive
+  `issue` end to end (labels, push, run-log and memory commit, draft PR), `review` (fix one
+  comment, explain another, every comment answered, round appended, untrusted comments
+  ignored) and `ci-fix` (attempt cap, pause comment).
 - Manual smoke: a real run against a scratch repo before merging.
 
 ## Boundaries
 
 - **Always**: draft PRs only; feature branches only (`validate_branch`); target the literal
   repo URL; never write the token to disk or into logs; `make check` green.
-- **Ask first**: any dependency beyond litellm/requests; changing a prompt's substance;
-  changing the trust/approval rules.
+- **Ask first**: any dependency beyond pydantic-ai-slim/pydantic-ai-harness/requests; changing
+  a prompt's substance; changing the trust/approval rules.
 - **Never**: merge tools; push to main/master; store secrets in code.
 - **Known risk (by design)**: the clans' `bash` tool runs repo code on the
   host with no sandbox. Run it in a disposable environment (e.g. a CI runner) for untrusted
@@ -172,8 +208,8 @@ def validate_branch(branch: str) -> str | None:
 
 ## Success Criteria
 
-1. `pip install ./packages/vk` gives a working `vk` CLI; the only
-   runtime deps are litellm and requests.
+1. `uv tool install ./packages/vk` gives a working `vk` CLI; the only runtime deps are
+   pydantic-ai-slim, pydantic-ai-harness and requests.
 2. `vk issue N` on a scratch repo produces: classifier labels plus status labels
    on the issue, progress comments, a pushed `vk/*` branch containing
    `docs/factory/issue-N.md`, a draft PR with `Closes #N` and the acceptance-criteria checklist,
@@ -184,22 +220,39 @@ def validate_branch(branch: str) -> str | None:
 5. `vk review PR` replies to every unanswered review comment (fixed with a commit
    reference, or an explanation), pushes fixes to the same branch, and appends a round to the
    log.
-6. Switching `VK_MODEL` between two providers (e.g. `anthropic/…`, `openai/…`) works with
-   no code change.
+6. Switching `VK_MODEL` between two providers (e.g. `google:…`, `anthropic:…`) works with
+   no code change. A LiteLLM-style `provider/model` string is a configuration error (exit 2).
 7. Unattended mode never calls a denied tool (test-enforced); there is no code path that pushes
    to main or merges.
 8. `make check` passes.
+
+## Decisions
+
+- **Direction B, code-driven**: Python sequences the pipeline and enforces every "never" rule
+  (status labels, ≤2 revision cycles, run log before the PR, `Closes #N`, a reply to every
+  comment); agents only judge and get read-only GitHub tools. This replaced an LLM orchestrator
+  whose prompt encoded the control flow.
+- **Model-written memory is untrusted**: notes are written by a model that reads issue and
+  review text, so they may carry an injected claim. Every note lands in the PR diff and a
+  person reviews it at merge; agents are told to write only what they verified. Revisit the
+  harness Prompt Injection Defender if that bar proves too low.
+- **Untrusted authors' comments are ignored**: only the issue or PR author, VK itself, and
+  collaborators with triage permission or higher reach an agent or get handled. Outsiders and
+  other bots are dropped before any model call.
+- **Known limit**: comment and marker lookups (status, reply and CI-fix attempt markers) read
+  only the first 100 comments of an issue or PR; past that they can miss a marker.
+- **Brain storage (was open question 2)**: the factory brain is committed to the target repo
+  as per-issue notebooks (`docs/factory/memory/issue-<N>/`), not a local file, so it survives
+  ephemeral CI runners. Each run writes only its own issue's folder, so parallel factory PRs
+  cannot conflict. Cross-issue learning is a read-only injection of the other issues'
+  `repo-notes.md`.
 
 ## Open Questions
 
 1. **Package path/name**: `packages/vk/`, PyPI `vk`, import
    `vk`. OK? (The PyPI name may be taken; checked at publish time.)
-2. **Factory brain storage**: a local file under `VK_STATE_DIR` is lost on ephemeral CI
-   runners. The alternative is committing it to the target repo (e.g. `docs/factory/BRAIN.md`).
-   Default: local file.
-3. **Researcher `web_search`**: Default is LiteLLM's
-   provider-native web search where the model supports it, otherwise the tool reports itself
-   unavailable. `web_fetch` uses requests.
-4. **Status labels**: VK never invents labels otherwise, but `vk:*` status labels need creating
+2. **Researcher `web_search`**: Not provided; the researcher has `web_fetch` (requests) only.
+   Add provider-native web search where the model supports it?
+3. **Status labels**: VK never invents labels otherwise, but `vk:*` status labels need creating
    once. OK to create them, or should status be comments only?
-5. Add a "summarize PRs opened by others" path as `vk summarize <PR>`? Default: no.
+4. Add a "summarize PRs opened by others" path as `vk summarize <PR>`? Default: no.

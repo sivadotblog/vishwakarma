@@ -34,7 +34,7 @@ class GitHub:
         self.cfg = cfg
         self.session = session or requests.Session()
         self.repo_path = f"/repos/{cfg.repo}"
-        self._login: str | None = None
+        self._login: str | None = cfg.bot_login
 
     def _send(self, method: str, path: str, **kw: Any) -> requests.Response:
         headers = {
@@ -190,11 +190,23 @@ def _review_comments(gh: GitHub, a: Args) -> Any:
                 "line": c.get("line") or c.get("original_line"),
                 "body": c["body"],
                 "user": c["user"]["login"],
+                "user_type": c["user"].get("type"),
                 "in_reply_to_id": c.get("in_reply_to_id"),
                 "answered": answered,
             }
         )
     return out
+
+
+def _collaborator_permission(gh: GitHub, a: Args) -> Any:
+    login = a["username"]
+    try:
+        data = gh.request("GET", gh.repo(f"/collaborators/{quote(login, safe='')}/permission"))
+    except GitHubError as exc:
+        if exc.status != 404:
+            raise
+        return {"login": login, "role_name": "none"}  # not a collaborator: no access
+    return {"login": login, "role_name": (data or {}).get("role_name", "none")}
 
 
 def _ensure_label(gh: GitHub, a: Args) -> Any:
@@ -511,6 +523,12 @@ def _specs() -> list[Spec]:
             "List inline review comments on a PR, each with an `answered` flag.",
             s(["pull_number"], **_PR),
             _review_comments,
+        ),
+        Spec(
+            "getCollaboratorPermission",
+            "A user's role on this repository (admin, maintain, write, triage, read or none).",
+            s(["username"], username="string"),
+            _collaborator_permission,
         ),
         Spec(
             "replyToReviewComment",
