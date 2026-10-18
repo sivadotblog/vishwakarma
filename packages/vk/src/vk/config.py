@@ -6,6 +6,12 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from pydantic_ai.models import Model
+from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.google import GoogleProvider
+from pydantic_ai.providers.openai import OpenAIProvider
+
 CLANS = ("orchestrator", "classifier", "researcher", "analyst", "implementer", "reviewer")
 
 
@@ -67,3 +73,25 @@ def load_config(env: dict[str, str] | None = None, cwd: Path | None = None) -> C
         setup_command=e.get("VK_SETUP_COMMAND") or None,
         max_output_tokens=int(e.get("VK_MAX_OUTPUT_TOKENS", "100000")),
     )
+
+
+def build_model(cfg: Config, clan: str, env: dict[str, str] | None = None) -> Model | str:
+    """Return the PydanticAI model for `clan`: a native `provider:model` string, or a gateway model.
+
+    With `VK_LLM_BASE_URL` set, every model name is sent to that OpenAI-compatible gateway
+    (key from `VK_LLM_API_KEY`). `google:` models read `GEMINI_API_KEY` first (the existing CI
+    secret), then fall back to the provider's own default (`GOOGLE_API_KEY`).
+    """
+    e = dict(os.environ) if env is None else env
+    name = cfg.model_for(clan)
+    if base_url := e.get("VK_LLM_BASE_URL"):
+        provider = OpenAIProvider(base_url=base_url, api_key=e.get("VK_LLM_API_KEY"))
+        return OpenAIChatModel(name, provider=provider)
+    if ":" not in name:
+        raise ConfigError(
+            f"Model {name!r} for {clan!r} must be 'provider:model', e.g. 'google:gemini-3.5-flash'."
+        )
+    kind, _, model_name = name.partition(":")
+    if kind == "google" and (key := e.get("GEMINI_API_KEY")):
+        return GoogleModel(model_name, provider=GoogleProvider(api_key=key))
+    return name

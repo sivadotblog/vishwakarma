@@ -5,7 +5,12 @@ description = "Autonomous issue -> PR -> review-fix software factory, any LLM vi
 readme = "README.md"
 authors = [{ name = "sivadotblog", email = "sivanandha@gmail.com" }]
 requires-python = ">=3.12"
-dependencies = ["litellm", "requests"]
+dependencies = [
+    "litellm",
+    "pydantic-ai-harness>=0.24.0",
+    "pydantic-ai-slim[anthropic,google,openai]>=2.31.1",
+    "requests",
+]
 
 [project.scripts]
 vk = "vk.cli:main"
