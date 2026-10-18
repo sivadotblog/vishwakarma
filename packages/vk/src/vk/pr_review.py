@@ -3,7 +3,6 @@
 import logging
 import re
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -20,6 +19,7 @@ from vk.pipeline import (
     Stages,
     agent_instructions,
     implement_and_review,
+    load_notebook,
     review_findings,
     section,
 )
@@ -30,7 +30,6 @@ log = logging.getLogger(__name__)
 REPLY_MARKER = "<!-- vk:review-reply:{} -->"
 _REPLY_ID = re.compile(r"<!-- vk:review-reply:(\d+) -->")
 _CLOSES = re.compile(r"\bcloses\s+#(\d+)", re.IGNORECASE)
-TRUSTED_ROLES = {"admin", "maintain", "write", "triage"}  # same bar as the workflow's check
 UNSETTLED = "I couldn't settle on a response to this one, so a person should look at it."
 
 
@@ -63,19 +62,6 @@ class Item:
         return f"Comment {self.id}{where} by @{self.author}"
 
 
-def _trust_check(ops: PrOps) -> Callable[[str], bool]:
-    """Whether a login holds a role that may hand work to the factory; cached for the run."""
-    cache: dict[str, bool] = {}
-
-    def trusted(login: str) -> bool:
-        if login not in cache:
-            role = ops.call("getCollaboratorPermission", username=login)["role_name"]
-            cache[login] = role in TRUSTED_ROLES
-        return cache[login]
-
-    return trusted
-
-
 def _unanswered(ops: PrOps, ctx: dict[str, Any]) -> tuple[list[Item], int]:
     """Unanswered inline comments, then unanswered review bodies, from trusted people only.
 
@@ -83,7 +69,7 @@ def _unanswered(ops: PrOps, ctx: dict[str, Any]) -> tuple[list[Item], int]:
     agent. Returns the items and how many were skipped for that reason.
     """
     me = ops.gh.me()
-    trusted = _trust_check(ops)
+    trusted = ops.trusted
     skipped = 0
 
     def allowed(login: str, user_type: str | None, what: str) -> bool:
@@ -247,10 +233,14 @@ def run_review(
         return f"The run log {runlog.log_path(issue)} is not on branch `{head}`; I did nothing."
 
     started = time.monotonic()
-    stages = Stages(cfg, model, remote_url)
     log.info("review PR #%d starting items=%d", pr_number, len(items))
     try:
-        summary = _handle(cfg, ops, stages, pr, issue, items, log_file["content"], head, base)
+        notebook = load_notebook(cfg, issue, head, remote_url)
+        try:
+            stages = Stages(cfg, model, remote_url, notebook)
+            summary = _handle(cfg, ops, stages, pr, issue, items, log_file["content"], head, base)
+        finally:
+            notebook.close()
         summary += ignored
     except StageFailed as exc:
         ops.comment(
@@ -350,7 +340,7 @@ def _handle(
         args["implementation"] = loop.implementation.model_dump(mode="json", by_alias=True)
         args["review"] = loop.review.model_dump(mode="json", by_alias=True)
     try:
-        runlog.publish(cfg, args, remote_url=stages.remote_url)
+        runlog.publish(cfg, args, remote_url=stages.remote_url, files=stages.notebook_changes())
     except ToolError as exc:
         raise StageFailed("run log", exc) from exc
 

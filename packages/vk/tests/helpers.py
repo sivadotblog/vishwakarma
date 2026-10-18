@@ -7,7 +7,14 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 import requests
-from pydantic_ai import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, UserPromptPart
+from pydantic_ai import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextContent,
+    ToolCallPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -63,7 +70,12 @@ class Call(NamedTuple):
     agent: str
     instructions: str
     prompt: str
-    tools: list[str]
+    tools: list[str]  # the agent's own tools, without the memory tools
+    memory_tools: tuple[str, ...] = ()
+    memory: str = ""  # the notebook block the memory capability injected beside the prompt
+
+
+MEMORY_TOOLS = {"write_memory", "read_memory", "delete_memory", "search_memory"}
 
 
 def clan_models(*, calls: list[Call] | None = None, **roles: list[Any]) -> Callable[[str], Model]:
@@ -80,8 +92,24 @@ def clan_models(*, calls: list[Call] | None = None, **roles: list[Any]) -> Calla
                 first = messages[0]
                 assert isinstance(first, ModelRequest)
                 prompt = next(p.content for p in first.parts if isinstance(p, UserPromptPart))
-                tools = [t.name for t in info.function_tools]
-                calls.append(Call(name, first.instructions or "", str(prompt), tools))
+                names = [t.name for t in info.function_tools]
+                injected = "\n".join(
+                    item.content
+                    for p in first.parts
+                    if isinstance(p, UserPromptPart) and not isinstance(p.content, str)
+                    for item in p.content
+                    if isinstance(item, TextContent)
+                )
+                calls.append(
+                    Call(
+                        name,
+                        first.instructions or "",
+                        str(prompt),
+                        [n for n in names if n not in MEMORY_TOOLS],
+                        tuple(n for n in names if n in MEMORY_TOOLS),
+                        injected,
+                    )
+                )
             parts = [
                 ToolCallPart(info.output_tools[0].name if tool == "submit" else tool, args)
                 for tool, args in turns.pop(0)

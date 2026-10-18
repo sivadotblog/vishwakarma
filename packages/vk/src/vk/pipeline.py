@@ -6,18 +6,19 @@ import logging
 import re
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from pydantic import BaseModel
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.models import Model
 
-from vk import agents, runlog
+from vk import agents, git, memory, runlog
 from vk.approval import PREFIX, READS, Caller, Confirm
 from vk.clans import PROMPTS_DIR, run_clan
 from vk.config import Config
 from vk.github import GitHub, GitHubError, github_tools
+from vk.memory import Notebook
 from vk.models import (
     Analysis,
     Classification,
@@ -36,6 +37,7 @@ MAX_REVIEW_CYCLES = 2
 MAX_CI_FIX_ATTEMPTS = 2
 STATUS_LABELS = ("vk:in-progress", "vk:pr-open", "vk:needs-info", "vk:blocked")
 IN_PROGRESS, PR_OPEN, NEEDS_INFO, BLOCKED = STATUS_LABELS
+TRUSTED_ROLES = {"admin", "maintain", "write", "triage"}  # same bar as the workflow's check
 
 ModelFactory = Callable[[str], Model]
 
@@ -72,11 +74,21 @@ class Stages:
     cfg: Config
     model: ModelFactory | None = None
     remote_url: str | None = None
+    notebook: Notebook | None = None  # the run's memory, attached to every agent
 
     def clan[T: BaseModel](self, name: str, message: str, out: type[T]) -> T:
+        nb = self.notebook
         result = _attempt(
             name,
-            lambda: run_clan(name, message, self.cfg, model=self.model, remote_url=self.remote_url),
+            lambda: run_clan(
+                name,
+                message,
+                self.cfg,
+                model=self.model,
+                remote_url=self.remote_url,
+                capabilities=nb.capabilities() if nb else (),
+                extra_instructions=nb.instructions if nb else "",
+            ),
         )
         if not isinstance(result, out):
             raise TypeError(f"clan {name} returned {type(result).__name__}, not {out.__name__}")
@@ -85,6 +97,9 @@ class Stages:
     def agent[T](
         self, name: str, out: type[T], instructions: str, message: str, tools: list[Tool]
     ) -> T:
+        nb = self.notebook
+        if nb:
+            instructions = f"{instructions.rstrip()}\n\n{nb.instructions}\n"
         return _attempt(
             name,
             lambda: agents.run_typed(
@@ -94,9 +109,14 @@ class Stages:
                 message,
                 tools,
                 self.cfg,
+                capabilities=nb.capabilities() if nb else (),
                 model=self.model(name) if self.model else None,
             ),
         )
+
+    def notebook_changes(self) -> dict[str, str | None]:
+        """Notebook files to commit with the run log (none without a notebook)."""
+        return self.notebook.changes() if self.notebook else {}
 
 
 class Ops:
@@ -105,12 +125,20 @@ class Ops:
     def __init__(self, gh: GitHub, caller: Caller, confirm: Confirm | None) -> None:
         self.gh = gh
         self._tools = {t.name: t for t in github_tools(gh, caller, confirm)}
+        self._roles: dict[str, bool] = {}
 
     def call(self, tool: str, /, **args: Any) -> Any:
         return self._tools[PREFIX + tool].fn(args)
 
     def read_tools(self) -> list[Tool]:
         return [t for t in self._tools.values() if t.name.removeprefix(PREFIX) in READS]
+
+    def trusted(self, login: str) -> bool:
+        """Whether a login holds a role that may hand work to the factory; cached per run."""
+        if login not in self._roles:
+            role = self.call("getCollaboratorPermission", username=login)["role_name"]
+            self._roles[login] = role in TRUSTED_ROLES
+        return self._roles[login]
 
 
 class IssueOps(Ops):
@@ -120,6 +148,54 @@ class IssueOps(Ops):
         super().__init__(gh, caller, confirm)
         self.number = number
         self.status: str | None = None
+
+    def visible_comments(
+        self, ctx: dict[str, Any], comments: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], int]:
+        """The comments an agent may read, and how many were left out.
+
+        Labeling the issue `vk` vouches for its author, not for strangers who comment later.
+        So only VK's own comments, the author's, and those of trusted collaborators pass;
+        other bots and everyone else are omitted.
+        """
+        author = (ctx["issue"].get("user") or {}).get("login")
+        kept = []
+        for c in comments:
+            user = c.get("user") or {}
+            login = user.get("login", "")
+            if login == self.gh.me():
+                kept.append(c)
+            elif user.get("type") == "Bot":
+                continue
+            elif login == author or (login and self.trusted(login)):
+                kept.append(c)
+        return kept, len(comments) - len(kept)
+
+    def read_tools(self) -> list[Tool]:
+        """Read tools, with this issue's comments screened wherever an agent could fetch them."""
+        screened = {"getIssueContext", "listIssueComments"}
+        return [
+            replace(t, fn=self._screen(t)) if t.name.removeprefix(PREFIX) in screened else t
+            for t in super().read_tools()
+        ]
+
+    def _screen(self, tool: Tool) -> Callable[[dict[str, Any]], Any]:
+        def fn(args: dict[str, Any]) -> Any:
+            result = tool.fn(args)
+            if args.get("issue_number") != self.number:
+                return result
+            ctx = (
+                result
+                if isinstance(result, dict)
+                else self.call("getIssueContext", issue_number=self.number)
+            )
+            comments = ctx["comments"] if isinstance(result, dict) else result
+            kept, omitted = self.visible_comments(ctx, comments)
+            if isinstance(result, dict):
+                return {**result, "comments": kept, "omitted_comments": omitted}
+            return kept
+
+        return fn
 
     def comment(self, body: str) -> None:
         self.call("addIssueComment", issue_number=self.number, body=body)
@@ -174,17 +250,23 @@ def dump(model: BaseModel) -> str:
     return json.dumps(model.model_dump(mode="json", by_alias=True), indent=2)
 
 
-def _issue_text(number: int, ctx: dict[str, Any]) -> str:
-    """The issue verbatim: title, body, and every comment."""
+def _issue_text(number: int, ctx: dict[str, Any], ops: IssueOps) -> str:
+    """The issue verbatim: title, body, and the comments `ops.visible_comments` lets through."""
     issue = ctx["issue"]
     author = (issue.get("user") or {}).get("login", "unknown")
     parts = [f"# Issue #{number}: {issue.get('title', '')}", f"Opened by @{author}.", ""]
     parts.append(issue.get("body") or "(no description)")
-    comments = ctx.get("comments") or []
+    comments, omitted = ops.visible_comments(ctx, ctx.get("comments") or [])
     if comments:
         parts += ["", "## Comments"]
         for c in comments:
             parts += ["", f"@{(c.get('user') or {}).get('login', 'unknown')}:", c.get("body", "")]
+    if omitted:
+        parts += [
+            "",
+            f"({omitted} comment(s) omitted: not from the issue author, VK, or a collaborator "
+            "with write access.)",
+        ]
     return "\n".join(parts)
 
 
@@ -294,6 +376,14 @@ def implement_and_review(
         impl = implement(revision)
 
 
+def load_notebook(cfg: Config, issue: int, ref: str, remote_url: str | None) -> Notebook:
+    """Materialize the run's memory from `ref`; a git failure ends the run as a stage failure."""
+    try:
+        return memory.open_notebook(cfg, issue, ref, remote_url=remote_url)
+    except git.GitError as exc:
+        raise StageFailed("memory", exc) from exc
+
+
 def _preferences(cfg: Config, caller: Caller) -> str:
     """The signed-in user's saved preferences; unattended runs have none."""
     if caller.unattended:
@@ -331,7 +421,6 @@ def run_issue(
     `model` (agent name -> PydanticAI model) and `remote_url` are test seams.
     """
     ops = IssueOps(gh, caller, confirm, number)
-    stages = Stages(cfg, model, remote_url)
     started = time.monotonic()
 
     ctx = ops.call("getIssueContext", issue_number=number)
@@ -341,11 +430,16 @@ def run_issue(
     for stale in on_issue & set(STATUS_LABELS):  # left by an earlier run
         ops.remove_label(stale)
     ops.set_status(IN_PROGRESS)
-    issue = _issue_text(number, ctx)
+    issue = _issue_text(number, ctx, ops)
     log.info("issue #%d starting repo=%s", number, cfg.repo)
 
     try:
-        summary = _run(cfg, ops, stages, caller, number, issue, on_issue)
+        notebook = load_notebook(cfg, number, "HEAD", remote_url)
+        try:
+            stages = Stages(cfg, model, remote_url, notebook)
+            summary = _run(cfg, ops, stages, caller, number, issue, on_issue)
+        finally:
+            notebook.close()
     except StageFailed as exc:
         ops.comment(
             f"I hit an error in the {exc.stage} step and stopped, so no pull request was "
@@ -467,9 +561,12 @@ def _run(
                 "review": review.model_dump(mode="json", by_alias=True),
             },
             remote_url=stages.remote_url,
+            files=stages.notebook_changes(),
         )
     except ToolError as exc:
         raise StageFailed("run log", exc) from exc
+    if stages.notebook:
+        stages.notebook.mark_saved()
     pr_message = "\n\n".join(
         [
             *plan,
@@ -487,6 +584,11 @@ def _run(
         pr_message,
         [],
     )
+    if stages.notebook:  # the pr_writer has the notebook too, so keep what it wrote
+        try:
+            memory.save(cfg, stages.notebook, impl.branch, remote_url=stages.remote_url)
+        except git.GitError as exc:
+            raise StageFailed("memory", exc) from exc
     created = ops.call(
         "createPullRequest",
         title=pr.title,

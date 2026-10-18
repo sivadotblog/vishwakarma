@@ -2,9 +2,11 @@
 
 import json
 import logging
+import re
 import time
 from typing import Any
 
+from vk import git, memory
 from vk.approval import Caller, Confirm
 from vk.config import Config
 from vk.github import GitHub
@@ -19,6 +21,7 @@ from vk.pipeline import (
     agent_instructions,
     dump,
     implement_and_review,
+    load_notebook,
     review_findings,
     section,
 )
@@ -27,6 +30,7 @@ log = logging.getLogger(__name__)
 
 ATTEMPT_MARKER = "<!-- vk:ci-fix-attempt -->"
 PAUSE_MARKER = "<!-- vk:ci-fix-paused -->"
+_CLOSES = re.compile(r"\bcloses\s+#(\d+)", re.IGNORECASE)
 
 
 def run_ci_fix(
@@ -74,7 +78,15 @@ def run_ci_fix(
     started = time.monotonic()
     log.info("ci-fix PR #%d attempt %d", pr_number, attempts + 1)
     try:
-        summary = _attempt(cfg, ops, Stages(cfg, model, remote_url), pr, failure, head, base)
+        closes = _CLOSES.search(pr.get("body") or "")
+        # Memory is per issue, so a PR that names none runs without it.
+        notebook = load_notebook(cfg, int(closes.group(1)), head, remote_url) if closes else None
+        try:
+            stages = Stages(cfg, model, remote_url, notebook)
+            summary = _attempt(cfg, ops, stages, pr, failure, head, base)
+        finally:
+            if notebook:
+                notebook.close()
     except StageFailed as exc:
         ops.comment(
             f"I hit an error in the {exc.stage} step and stopped, so the CI failure is not "
@@ -129,6 +141,11 @@ def _attempt(
         ]
     )
     loop = implement_and_review(stages, task, brief, branch=head)
+    if stages.notebook:  # no run log here to carry the notes, so commit them alone
+        try:
+            memory.save(cfg, stages.notebook, head, remote_url=stages.remote_url)
+        except git.GitError as exc:
+            raise StageFailed("memory", exc) from exc
     sha = ops.context()["pull_request"]["head"]["sha"]
     ops.comment(_outcome(loop, diagnosis, head, sha))
     if loop.approved:

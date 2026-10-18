@@ -2,7 +2,7 @@
 
 import re
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from vk import git
@@ -100,7 +100,14 @@ def _next_round(existing: str) -> int:
     return len(re.findall(rf"^{ROUND_HEADING} \d+", existing, re.MULTILINE)) + 1
 
 
-def publish(cfg: Config, args: Data, *, remote_url: str | None = None) -> Data:
+def publish(
+    cfg: Config,
+    args: Data,
+    *,
+    remote_url: str | None = None,
+    files: Mapping[str, str | None] | None = None,
+) -> Data:
+    """Commit the run log; `files` (repo path -> text, `None` deletes) ride in the same commit."""
     issue = args.get("issue_number")
     branch = args.get("branch")
     mode = args.get("mode", "write")
@@ -134,7 +141,9 @@ def publish(cfg: Config, args: Data, *, remote_url: str | None = None) -> Data:
             content = existing.rstrip("\n") + "\n" + render_review_round(int(round_no), args)
             message = f"docs: append review round {round_no} to factory run log for #{issue}"
         try:
-            sha = git.commit_file(repo_dir, branch, path, content, message, cfg=cfg)
+            sha = git.commit_files(
+                repo_dir, branch, {path: content, **(files or {})}, message, cfg=cfg
+            )
         except git.GitError as exc:
             raise ToolError(str(exc)) from None
         pushed = git.push_branch(cfg, repo_dir, branch, remote_url=remote_url)

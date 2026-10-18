@@ -9,8 +9,10 @@ import base64
 import logging
 import os
 import re
+import shutil
 import subprocess
 import tempfile
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from vk.config import Config
@@ -178,22 +180,30 @@ def push_branch(
         return {"error": str(exc), "success": False}
 
 
-def commit_file(
-    repo_dir: Path, branch: str, path: str, content: str, message: str, *, cfg: Config | None = None
+def commit_files(
+    repo_dir: Path,
+    branch: str,
+    files: Mapping[str, str | None],
+    message: str,
+    *,
+    cfg: Config | None = None,
 ) -> str:
-    """Write `path` (relative to the repo) on local `branch`, commit it, return the sha.
+    """Write (or, for `None`, delete) `files` (repo-relative paths) on local `branch` in one commit.
 
-    Does not push. Raises `GitError` on failure or an unsafe path/branch.
+    Returns the sha. Does not push. Raises `GitError` on failure or an unsafe path/branch.
     """
     refusal = validate_branch(branch)
     if refusal:
         raise GitError(refusal)
     root = repo_dir.resolve()
-    target = (root / path).resolve()
-    if not target.is_relative_to(root) or ".git" in target.relative_to(root).parts:
-        raise GitError(f'"{path}" is outside the repository.')
+    targets: dict[Path, str | None] = {}
+    for path, content in files.items():
+        target = (root / path).resolve()
+        if not target.is_relative_to(root) or ".git" in target.relative_to(root).parts:
+            raise GitError(f'"{path}" is outside the repository.')
+        targets[target] = content
     token = cfg.github_token if cfg else None
-    log.info("git commit_file branch=%s path=%s", branch, path)
+    log.info("git commit_files branch=%s paths=%s", branch, ",".join(files))
 
     def git(*args: str) -> str:
         proc = subprocess.run(
@@ -206,11 +216,63 @@ def commit_file(
 
     if git("rev-parse", "--abbrev-ref", "HEAD") != branch:
         git("checkout", branch)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
-    git("add", "--", str(target.relative_to(root)))
+    for target, content in targets.items():
+        if content is None:
+            target.unlink(missing_ok=True)
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+        git("add", "-A", "--", str(target.relative_to(root)))
     git("commit", "-m", message)
     return git("rev-parse", "HEAD")
+
+
+def commit_file(
+    repo_dir: Path, branch: str, path: str, content: str, message: str, *, cfg: Config | None = None
+) -> str:
+    """Write `path` (relative to the repo) on local `branch`, commit it, return the sha."""
+    return commit_files(repo_dir, branch, {path: content}, message, cfg=cfg)
+
+
+def read_files(
+    cfg: Config,
+    ref: str,
+    prefix: str,
+    wanted: Callable[[str], bool],
+    *,
+    remote_url: str | None = None,
+) -> dict[str, str]:
+    """Text of the files under `prefix` at `ref` on the remote that `wanted(path)` accepts.
+
+    Fetches only that one commit (no checkout, no setup command), so it is cheap enough to
+    run at the start of every run. `ref` may be a branch name or `HEAD` (the default branch).
+    """
+    parent = cfg.state_dir / "work"
+    parent.mkdir(parents=True, exist_ok=True)
+    scratch = Path(tempfile.mkdtemp(prefix="snapshot-", dir=parent))
+    try:
+        _run(cfg, ["init", "-q"], scratch, auth=False)
+        url = remote_url or remote_url_for(cfg)
+        _run(
+            cfg,
+            ["fetch", "-q", "--depth", "1", url, ref],
+            scratch,
+            remote_url=remote_url,
+            auth=True,
+        )
+        listing = _run(
+            cfg,
+            ["ls-tree", "-r", "-z", "--name-only", "FETCH_HEAD", "--", prefix],
+            scratch,
+            auth=False,
+        )
+        return {
+            path: _run(cfg, ["show", f"FETCH_HEAD:{path}"], scratch, auth=False)
+            for path in listing.split("\0")
+            if path and wanted(path)
+        }
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
 
 
 def git_tools(

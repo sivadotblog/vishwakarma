@@ -186,3 +186,31 @@ def test_a_stage_failing_posts_an_error_after_the_attempt_comment(
     assert announced.startswith(ATTEMPT_MARKER)
     assert "implementer" in error and "push rejected" in error and "not fixed" in error
     assert "implementer" in summary
+
+
+def test_notes_from_a_fix_attempt_are_committed_to_the_branch_after_the_fix(
+    cfg: Config, remote: Path, tmp_path: Path
+) -> None:
+    seed_branch(remote, tmp_path)
+    before = branch_sha(remote)
+    models = clan_models(
+        ci_diagnoser=[
+            [("write_memory", {"content": "- lint runs on the whole tree"})],
+            [("submit", DIAGNOSIS)],
+        ],
+        implementer=revisions(0),
+        reviewer=[[("submit", REVIEW)]],
+    )
+    session = PrSession(routes(before), remote)
+
+    go(cfg, remote, models, session)
+
+    git = ["git", "--git-dir", str(remote)]
+    assert sh(*git, "show", "--name-only", "--format=", BRANCH).split() == [
+        "docs/factory/memory/issue-7/MEMORY.md"
+    ]
+    assert "lint runs on the whole tree" in sh(
+        *git, "show", f"{BRANCH}:docs/factory/memory/issue-7/MEMORY.md"
+    )
+    outcome = session.posts(PR_COMMENTS)[-1]["body"]
+    assert branch_sha(remote)[:7] in outcome  # the reported head includes the notes commit

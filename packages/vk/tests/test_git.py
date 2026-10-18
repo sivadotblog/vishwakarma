@@ -9,8 +9,10 @@ from vk.git import (
     checkout_branch,
     clone_repo,
     commit_file,
+    commit_files,
     git_tools,
     push_branch,
+    read_files,
     sanitize,
     validate_branch,
 )
@@ -131,6 +133,44 @@ def test_commit_file_rejects_traversal(tmp_path: Path, remote: str) -> None:
         commit_file(repo, "vk/x", "../evil.txt", "x", "m")
     with pytest.raises(GitError):
         commit_file(repo, "main", "a.txt", "x", "m")
+
+
+def test_commit_files_writes_and_deletes_in_one_commit(tmp_path: Path, remote: str) -> None:
+    repo = clone_repo(make_cfg(tmp_path), remote_url=remote)
+    sh("git", "checkout", "-b", "vk/x", cwd=repo)
+    commit_files(repo, "vk/x", {"a/one.md": "1\n", "two.md": "2\n"}, "add")
+    before = sh("git", "rev-list", "--count", "HEAD", cwd=repo)
+
+    commit_files(repo, "vk/x", {"a/one.md": None, "three.md": "3\n"}, "swap")
+
+    assert sh("git", "rev-list", "--count", "HEAD", cwd=repo) == str(int(before) + 1)
+    assert sh("git", "show", "--name-status", "--format=", "HEAD", cwd=repo).split() == [
+        "D",
+        "a/one.md",
+        "A",
+        "three.md",
+    ]
+    with pytest.raises(GitError):  # one bad path refuses the whole commit
+        commit_files(repo, "vk/x", {"ok.md": "x", "../evil.md": "x"}, "m")
+    assert not (repo / "ok.md").exists()
+
+
+def test_read_files_filters_and_reads_a_branch_or_the_default(tmp_path: Path, remote: str) -> None:
+    cfg = make_cfg(tmp_path)
+    repo = clone_repo(cfg, remote_url=remote)
+    sh("git", "checkout", "-b", "vk/x", cwd=repo)
+    commit_files(repo, "vk/x", {"m/a.md": "A\n", "m/b.txt": "B\n", "other/c.md": "C\n"}, "add")
+    push_branch(cfg, repo, "vk/x", remote_url=remote)
+
+    wanted = lambda p: p.endswith(".md")  # noqa: E731
+    on_branch = read_files(cfg, "vk/x", "m", wanted, remote_url=remote)
+    on_default = read_files(cfg, "HEAD", "m", wanted, remote_url=remote)
+
+    assert on_branch == {"m/a.md": "A"}
+    assert on_default == {}
+    assert not list((cfg.state_dir / "work").glob("snapshot-*"))
+    with pytest.raises(GitError):
+        read_files(cfg, "vk/missing", "m", wanted, remote_url=remote)
 
 
 def test_git_tools_surface(tmp_path: Path) -> None:

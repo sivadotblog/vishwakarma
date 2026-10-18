@@ -354,8 +354,10 @@ def test_the_owners_comment_is_handled_when_vk_posts_as_a_bot(
 
 
 def test_a_stage_failing_twice_posts_an_error_comment_and_no_replies(
-    cfg: Config, remote: Path
+    cfg: Config, remote: Path, tmp_path: Path
 ) -> None:
+    seed_branch(remote, tmp_path)
+
     def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         raise RuntimeError("model fell over")
 
