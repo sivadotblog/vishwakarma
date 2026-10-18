@@ -118,6 +118,8 @@ def _attempt(
         "\n\n".join([*context, section("Failed checks", json.dumps(failure, indent=2))]),
         ops.read_tools(),
     )
+    first_line = (diagnosis.summary.strip().splitlines() or [""])[0]
+    log.info("ci diagnosis: %s", first_line[:120])
     findings = section("CI diagnosis", dump(diagnosis))
     task = "\n\n".join(
         [

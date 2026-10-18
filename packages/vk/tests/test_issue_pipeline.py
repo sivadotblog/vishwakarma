@@ -1,6 +1,7 @@
 """End-to-end issue pipeline: per-agent FunctionModels + fake GitHub + local bare git remote."""
 
 import getpass
+import logging
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -297,6 +298,30 @@ def test_one_revision_then_approval_opens_the_pr(cfg: Config, remote: Path) -> N
     assert PR_URL in reply and "1 revision(s)" in reply
     assert session.posts("/pulls")
     assert any("Revising" in b for b in comment_bodies(session))
+
+
+def test_decisions_are_logged_per_reviewer_cycle(
+    cfg: Config, remote: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    models = happy_models(
+        [],
+        implementer=implementer_runs(revisions=1),
+        reviewer=[[("submit", CHANGES)], [("submit", REVIEW)]],
+    )
+
+    with caplog.at_level(logging.INFO, logger="vk.pipeline"):
+        start(cfg, remote, models)
+
+    lines = [r.getMessage() for r in caplog.records]
+    assert (
+        "classification type=bug priority=high complexity=small needs_clarification=False" in lines
+    )
+    verdicts = [line for line in lines if line.startswith("reviewer verdict=")]
+    assert verdicts == [
+        f"reviewer verdict=request_changes blocking_findings={len(CHANGES['blocking_findings'])}"
+        " cycle=1",
+        "reviewer verdict=approve blocking_findings=0 cycle=2",
+    ]
 
 
 def test_reject_verdict_stops_without_revising(cfg: Config, remote: Path) -> None:

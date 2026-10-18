@@ -353,6 +353,12 @@ def implement_and_review(
             ]
         )
         review = stages.clan("reviewer", review_message, Review)
+        log.info(
+            "reviewer verdict=%s blocking_findings=%d cycle=%d",
+            review.verdict,
+            len(review.blocking_findings),
+            revisions + 1,
+        )
         if review.verdict != "request_changes" or revisions == MAX_REVIEW_CYCLES:
             return LoopResult(impl, review, review.verdict == "approve", revisions)
         revisions += 1
@@ -495,6 +501,13 @@ def _run(
 
     # 2. Classify; stop for clarification.
     classification = stages.clan("classifier", issue, Classification)
+    log.info(
+        "classification type=%s priority=%s complexity=%s needs_clarification=%s",
+        classification.type,
+        classification.priority,
+        classification.complexity,
+        classification.needs_clarification,
+    )
     if classification.needs_clarification:
         questions = "\n".join(f"- {q}" for q in classification.questions)
         ops.comment(

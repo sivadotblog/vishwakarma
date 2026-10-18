@@ -178,17 +178,46 @@ def test_tool_calls_in_one_turn_run_in_order_without_overlap() -> None:
     assert events == ["a start", "a end", "b start", "b end"]
 
 
-def test_token_usage_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+def test_per_request_usage_and_totals_are_logged(caplog: pytest.LogCaptureFixture) -> None:
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        usage = RequestUsage(input_tokens=100, output_tokens=5)
+        if not tool_returns(messages):
+            return ModelResponse(parts=[ToolCallPart("echo", {"x": 1})], usage=usage)
+        return final(info, {"verdict": "ok", "note": None}, usage=usage)
+
+    with caplog.at_level(logging.INFO, logger="vk.agents"):
+        run(FunctionModel(fn), [ECHO])
+    lines = [r.getMessage() for r in caplog.records]
+    assert any(line.startswith("agent analyst start model=") for line in lines)
+    for turn in (1, 2):
+        assert any(
+            line.startswith("llm analyst model=")
+            and line.endswith(f"turn={turn} prompt_tokens=100 completion_tokens=5 total_tokens=105")
+            for line in lines
+        )
+    assert (
+        "agent analyst done status=ok turns=2 prompt_tokens=200 completion_tokens=10"
+        " total_tokens=210" in lines
+    )
+
+
+def test_usage_is_logged_when_the_run_fails(caplog: pytest.LogCaptureFixture) -> None:
     def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return final(
             info,
             {"verdict": "ok", "note": None},
-            usage=RequestUsage(input_tokens=100, output_tokens=5),
+            usage=RequestUsage(input_tokens=100, output_tokens=50),
         )
 
-    with caplog.at_level(logging.INFO, logger="vk.agents"):
-        run(FunctionModel(fn), [])
+    with caplog.at_level(logging.INFO, logger="vk.agents"), pytest.raises(UsageLimitExceeded):
+        run(FunctionModel(fn), [], budget=10)
     lines = [r.getMessage() for r in caplog.records]
+    assert any(
+        line.startswith("llm analyst model=")
+        and line.endswith("turn=1 prompt_tokens=100 completion_tokens=50 total_tokens=150")
+        for line in lines
+    )
     assert (
-        "agent analyst done requests=1 input_tokens=100 output_tokens=5 total_tokens=105" in lines
+        "agent analyst done status=failed error=UsageLimitExceeded turns=1 prompt_tokens=100"
+        " completion_tokens=50 total_tokens=150" in lines
     )

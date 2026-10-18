@@ -284,6 +284,7 @@ def _handle(
     )
     decided = _settle(items, decisions)
     fixes = [i for i in items if decided[i.ref].decision == "fix"]
+    log.info("decider fix=%d wontfix=%d", len(fixes), len(items) - len(fixes))
 
     loop: LoopResult | None = None
     if fixes:

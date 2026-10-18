@@ -5,12 +5,12 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
-from pydantic_ai import Agent, ToolOutput
+from pydantic_ai import Agent, ModelMessage, ModelResponse, ToolOutput, capture_run_messages
 from pydantic_ai import Tool as AiTool
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ToolFailed
 from pydantic_ai.models import Model
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from vk.config import Config, build_model
 from vk.tooling import Tool
@@ -56,8 +56,9 @@ def run_typed[T](
 
     `model` overrides `build_model` and is the seam tests use to inject a fake model.
     """
+    llm = model or build_model(cfg, name)
     agent: Agent[None, T] = Agent(
-        model or build_model(cfg, name),
+        llm,
         name=name,
         instructions=instructions,
         output_type=output_type if output_type is str else ToolOutput(output_type),
@@ -65,18 +66,60 @@ def run_typed[T](
         capabilities=list(capabilities),
         retries={"output": 3},
     )
-    log.info("agent %s start", name)
-    result = agent.run_sync(
-        message,
-        usage_limits=UsageLimits(output_tokens_limit=cfg.max_output_tokens, request_limit=None),
+    model_name = llm if isinstance(llm, str) else llm.model_name
+    log.info("agent %s start model=%s", name, model_name)
+    usage = RunUsage()
+    with capture_run_messages() as messages:
+        try:
+            result = agent.run_sync(
+                message,
+                usage=usage,
+                usage_limits=UsageLimits(
+                    output_tokens_limit=cfg.max_output_tokens, request_limit=None
+                ),
+            )
+        except Exception as exc:
+            # Failed runs still spent tokens: log them before the error propagates.
+            _log_usage(name, model_name, messages, usage, failure=exc)
+            raise
+    _log_usage(name, model_name, messages, usage)
+    return result.output
+
+
+def _log_usage(
+    name: str,
+    model_name: str,
+    messages: list[ModelMessage],
+    usage: RunUsage,
+    failure: Exception | None = None,
+) -> None:
+    """Log one line per model request, then the agent's totals (marked failed on an error)."""
+    per_request = [m.usage for m in messages if isinstance(m, ModelResponse)]
+    # A response that trips a usage limit is counted in `usage` but never reaches the messages.
+    extra = RequestUsage(
+        input_tokens=usage.input_tokens - sum(u.input_tokens for u in per_request),
+        output_tokens=usage.output_tokens - sum(u.output_tokens for u in per_request),
     )
-    usage = result.usage
-    log.info(
-        "agent %s done requests=%d input_tokens=%d output_tokens=%d total_tokens=%d",
+    if extra.total_tokens > 0:
+        per_request.append(extra)
+    for turn, request in enumerate(per_request, start=1):
+        log.info(
+            "llm %s model=%s turn=%d prompt_tokens=%d completion_tokens=%d total_tokens=%d",
+            name,
+            model_name,
+            turn,
+            request.input_tokens,
+            request.output_tokens,
+            request.total_tokens,
+        )
+    status = "ok" if failure is None else f"failed error={type(failure).__name__}"
+    log.log(
+        logging.INFO if failure is None else logging.WARNING,
+        "agent %s done status=%s turns=%d prompt_tokens=%d completion_tokens=%d total_tokens=%d",
         name,
-        usage.requests,
+        status,
+        len(per_request),
         usage.input_tokens,
         usage.output_tokens,
         usage.total_tokens,
     )
-    return result.output
