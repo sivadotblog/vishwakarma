@@ -1,61 +1,64 @@
 ---
-title: Getting Started
-description: Setup, prerequisites, and handing your first issue to Vishwakarma.
+title: Get Started
+description: Setup, prerequisites, and how to transfer your first issue to Vishwakarma.
 ---
 
-Vishwakarma (VK) is an autonomous software factory that turns GitHub issues into reviewed draft pull requests.
+Vishwakarma (VK) is an autonomous software factory that converts GitHub issues into reviewed draft pull requests.
 
-## What This Repo Is
+## What This Repository Is
 
-This monorepo contains the Vishwakarma engine along with an API backend and documentation site:
+This monorepo contains the Vishwakarma engine, an API backend, and a documentation site:
 
-- **Software Factory (`packages/vk`)**: Python package implementing the issue-to-PR agentic workflow.
+- **Software Factory (`packages/vk`)**: Python package that executes the issue-to-PR workflow.
 - **Backend API (`apps/api`)**: Python backend service.
 - **Frontend Docs (`apps/web`)**: Astro Starlight documentation site.
 
 ## Prerequisites
 
-Before running Vishwakarma or developing locally, ensure you have installed:
+Before you run Vishwakarma or develop code locally, install these tools:
 
-- **Git**: Required for repository cloning, branch management, and commits.
+- **Git**: Required to clone repositories, manage branches, and commit code.
 - **Python 3.12+**: Required for `packages/vk` and `apps/api`.
-- **Node.js 18+ & npm**: Required for building and running `apps/web`.
+- **Node.js 18+ & npm**: Required to build and run `apps/web`.
 - **uv**: Fast Python package installer and workspace manager.
 
-## Installation & Setup
+## Installation and Setup
 
-Install all workspace dependencies across Python packages and Node workspaces using the root Makefile:
+Install all workspace dependencies across Python packages and Node workspaces with the root Makefile:
 
 ```bash
 make setup
 ```
 
-Under the hood, `make setup` executes:
+The `make setup` command executes these commands:
 
 - `uv sync --locked` for Python dependencies.
 - `npm ci` for Node.js dependencies.
 
 ## Verification
 
-Run the full project verification suite before submitting changes:
+Run the full project verification suite before you submit changes:
 
 ```bash
 make check
 ```
 
-`make check` executes:
+The `make check` command executes these checks:
 
-1. Python linting and formatting via `ruff`.
-2. Strict typechecking via `mypy --strict`.
-3. Test suite via `pytest`.
-4. Web workspace formatting via Prettier.
+1. Python lint and format checks with `ruff`.
+2. Strict type check with `mypy --strict`.
+3. Test suite with `pytest`.
+4. Web workspace format check with Prettier.
 5. Astro site diagnostic check (`astro check`).
 6. Astro static site build (`astro build`).
 
-## Handing Your First Issue to VK
+## Transfer Your First Issue to VK
 
-Handing an issue to the factory requires minimal action:
+Transfer an issue to the factory with these steps:
 
-1. Open a GitHub issue in a repository where Vishwakarma workflows are enabled.
+1. Open a GitHub issue in a repository where Vishwakarma workflows run.
 2. Label the issue with `vk`.
-3. Vishwakarma automatically triggers via GitHub Actions, classifies the task, creates an implementation plan, makes surgical code changes, runs `make check`, and opens a draft Pull Request linked to the issue (e.g., `Closes #12`).
+3. GitHub Actions automatically starts Vishwakarma.
+4. Vishwakarma classifies the task and creates an implementation plan.
+5. Vishwakarma changes the code and runs `make check`.
+6. Vishwakarma opens a draft Pull Request linked to the issue (e.g., `Closes #12`).

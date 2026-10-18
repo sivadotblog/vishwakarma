@@ -1,9 +1,9 @@
 ---
 title: Vishwakarma
-description: Autonomous software factory driving issue-to-PR workflows.
+description: Autonomous software factory that creates pull requests from issues.
 template: splash
 hero:
-  tagline: Autonomous software factory driving issue-to-PR workflows.
+  tagline: Autonomous software factory that creates pull requests from issues.
   actions:
     - text: Get started
       link: getting-started/
@@ -12,18 +12,17 @@ hero:
 
 import { Card, CardGrid } from '@astrojs/starlight/components';
 
-Vishwakarma is an autonomous software factory that turns GitHub issues into reviewed pull requests. Labeling an issue with `vk` hands it off to the factory to classify, plan, implement, and review before opening a draft pull request.
+Vishwakarma is an autonomous software factory that converts GitHub issues into reviewed pull requests. When you add the `vk` label to an issue, the factory receives the task. The factory classifies, plans, implements, and reviews the work. Then the factory creates a draft pull request.
 
 <CardGrid stagger>
 	<Card title="How work arrives" icon="pencil">
-		Label a GitHub issue with `vk` to hand work off to the factory.
+		Add the `vk` label to a GitHub issue to transfer work to the factory.
 	</Card>
 	<Card title="What you get back" icon="document">
-		Receive a reviewed draft pull request with an execution run log under
+		Receive a reviewed draft pull request with an execution run log in
 		`docs/factory/`.
 	</Card>
 	<Card title="Human in the loop" icon="setting">
-		Maintain control over key decisions: review the draft PR, mark it ready, and
-		merge.
+		Keep control of key decisions: review the draft PR, set it ready, and merge.
 	</Card>
 </CardGrid>
