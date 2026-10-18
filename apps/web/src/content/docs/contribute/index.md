@@ -7,7 +7,7 @@ Thank you for your contributions to Vishwakarma! This guide covers monorepo layo
 
 ## Monorepo Layout
 
-The repository contains distinct workspaces:
+The repository contains separate workspaces:
 
 | Path           | Description                                            | Tools                                                 |
 | -------------- | ------------------------------------------------------ | ----------------------------------------------------- |
@@ -18,7 +18,7 @@ The repository contains distinct workspaces:
 
 ## Strict Tool Rules
 
-To maintain monorepo stability across automated and human contributions, follow these package rules:
+To keep the monorepo stable across automated and human contributions, follow these package rules:
 
 - **Python Package Manager**: Use **uv** exclusively. Never use `pip`, `poetry`, or `conda`.
 - **Node Package Manager**: Use **npm** exclusively. Never use `pnpm`, `yarn`, or `bun`.

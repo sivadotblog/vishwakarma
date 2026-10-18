@@ -24,7 +24,7 @@ Vishwakarma is active and operates as a monorepo with the software factory packa
 
 - **Documentation Site (`apps/web`)**:
   - Built with Astro Starlight.
-  - Organized into nine standard sections: Get Started, Concepts, How-to Guides, Advanced, Examples, Integrations, API Reference, Contribute, and Release Notes.
+  - Organized into nine standard sections: Getting Started, Concepts, How-to Guides, Advanced, Examples, Integrations, API Reference, Contribute, and Release Notes.
 
 - **Verification Pipeline**:
   - Centralized Makefile (`make setup`, `make check`, `make format`).

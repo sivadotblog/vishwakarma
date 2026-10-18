@@ -55,7 +55,7 @@ jobs:
 
 ## Model Providers (PydanticAI)
 
-Vishwakarma uses PydanticAI as an abstraction layer across model providers. These tables list supported providers and environment variables:
+Vishwakarma uses PydanticAI as a common layer across model providers. These tables list supported providers and environment variables:
 
 | Provider          | Model Example                    | API Key Variable                   |
 | ----------------- | -------------------------------- | ---------------------------------- |

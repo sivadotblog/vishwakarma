@@ -41,7 +41,7 @@ The Analyst clan creates a step-by-step plan and explicit acceptance criteria:
 
 ## Stage 3: Implementation and Verification
 
-The Implementer clan creates branch `vk/docs-status-labels-reference` and performs surgical edits:
+The Implementer clan creates branch `vk/docs-status-labels-reference` and makes small, exact edits:
 
 ```bash
 # File operations

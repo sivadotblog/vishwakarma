@@ -11,7 +11,7 @@ Execute the `vk` CLI inside a local checkout of the target repository.
 
 ### `vk issue <N>`
 
-Processes an issue end-to-end (triage, plan, implementation, verification, review) and opens a draft pull request.
+Processes an unhandled GitHub issue end-to-end (triage, plan, implementation, verification, review) and opens a draft pull request.
 
 ```bash
 vk issue <ISSUE_NUMBER> [--unattended]
@@ -38,11 +38,11 @@ vk ci-fix <PR_NUMBER> [--unattended]
 
 ## Exit Codes
 
-| Code | Name                  | Description                                                                           |
-| ---- | --------------------- | ------------------------------------------------------------------------------------- |
-| `0`  | Success               | The operation completes, and the factory opens or updates a PR.                       |
-| `2`  | Configuration Error   | Environment variables (`GITHUB_TOKEN`, `VK_MODEL`), `git`, or repository are invalid. |
-| `3`  | Token Budget Exceeded | Execution stops because cumulative LLM token output exceeds `VK_MAX_OUTPUT_TOKENS`.   |
+| Code | Name                  | Description                                                                                                     |
+| ---- | --------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `0`  | Success               | The operation completes, and the factory opens or updates a PR.                                                 |
+| `2`  | Configuration Error   | A required environment variable (`GITHUB_TOKEN`, `VK_MODEL`) or `git` is missing, or the repository is invalid. |
+| `3`  | Token Budget Exceeded | Execution stops because total LLM token output exceeds `VK_MAX_OUTPUT_TOKENS`.                                  |
 
 ## Environment Variables Reference
 

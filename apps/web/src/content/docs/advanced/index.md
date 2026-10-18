@@ -35,7 +35,7 @@ A GitHub App token or PAT allows workflows from PR creation to run downstream CI
 
 Vishwakarma enforces role-based authorization before it executes commands:
 
-- **Issue Transfer**: When an issue receives the `vk` label, the workflow checks the sender role at `repos/{owner}/{repo}/collaborators/{username}/permission`.
+- **Issue Handover**: When an issue receives the `vk` label, the workflow checks the sender role at `repos/{owner}/{repo}/collaborators/{username}/permission`.
 - **Allowed Roles**: `admin`, `maintain`, `write`, and `triage`.
 - **Unauthorized User**: If a user without permissions adds the label, the workflow stops with an error comment.
 

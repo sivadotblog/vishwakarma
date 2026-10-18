@@ -1,6 +1,6 @@
 ---
-title: Get Started
-description: Setup, prerequisites, and how to transfer your first issue to Vishwakarma.
+title: Getting Started
+description: Setup, prerequisites, and how to hand your first issue to Vishwakarma.
 ---
 
 Vishwakarma (VK) is an autonomous software factory that converts GitHub issues into reviewed draft pull requests.
@@ -52,9 +52,9 @@ The `make check` command executes these checks:
 5. Astro site diagnostic check (`astro check`).
 6. Astro static site build (`astro build`).
 
-## Transfer Your First Issue to VK
+## Hand Your First Issue to VK
 
-Transfer an issue to the factory with these steps:
+Hand an issue to the factory with these steps:
 
 1. Open a GitHub issue in a repository where Vishwakarma workflows run.
 2. Label the issue with `vk`.

@@ -1,13 +1,13 @@
 ---
 title: How-to Guides
-description: Task-focused operational guides for Vishwakarma.
+description: Task-focused guides for Vishwakarma.
 ---
 
 This section provides step-by-step guides for common tasks when you operate Vishwakarma.
 
-## How to Transfer an Issue to VK
+## How to Hand an Issue to VK
 
-To transfer an issue to Vishwakarma:
+To hand an issue to Vishwakarma:
 
 1. Open a GitHub issue that describes the bug, feature, or maintenance task.
 2. Add the label `vk` to the issue.
@@ -20,9 +20,10 @@ When Vishwakarma opens a draft pull request:
 
 1. Review the changes and the run log in `docs/factory/issue-<N>.md`.
 2. If you request changes, write review comments on the pull request.
-3. Start the review cycle when you run `vk review <PR_NUMBER>`.
-4. Vishwakarma creates the PR branch, reads review comments, and addresses each item.
-5. Vishwakarma updates `docs/factory/issue-<N>.md` with review rounds and pushes updated commits.
+3. Submit the review. The `.github/workflows/vishwakarma-review.yml` workflow starts the review cycle.
+4. To start the review cycle locally, run `vk review <PR_NUMBER>`.
+5. Vishwakarma checks out the PR branch, reads the review comments, and answers each comment.
+6. Vishwakarma updates `docs/factory/issue-<N>.md` with review rounds and pushes updated commits.
 
 ## How to Change the LLM Model Used by VK
 
