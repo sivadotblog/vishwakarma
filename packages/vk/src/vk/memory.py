@@ -31,7 +31,10 @@ from vk.config import Config
 log = logging.getLogger(__name__)
 
 MEMORY_DIR = "docs/factory/memory"
+MAIN_FILE = "MEMORY.md"
 NOTES_FILE = "repo-notes.md"
+RESTORED = "## Earlier notes (restored)"
+LOGS = (MAIN_FILE, NOTES_FILE)  # running logs: earlier lines must survive a run
 BRAIN_BUDGET = 8000  # characters of other issues' notes injected into each agent
 MAX_FILES = 50  # notebook files persisted per run
 _NOTES_PATH = re.compile(rf"{re.escape(MEMORY_DIR)}/issue-(\d+)/{re.escape(NOTES_FILE)}")
@@ -45,13 +48,35 @@ def folder(issue: int) -> str:
 def _guidance(issue: int) -> str:
     return (
         "## Your notebook\n\n"
-        f"You keep a notebook for this work item (issue #{issue}) with the memory tools. Keep "
-        "notes about this work item in `MEMORY.md`. Put durable, repo-wide learnings (build "
-        "quirks, verification gotchas, recurring review findings, conventions) in "
-        f"`{NOTES_FILE}`; later work items read it. Every note is committed to the pull request "
+        f"You keep a notebook for this work item (issue #{issue}) with the memory tools. "
+        f"`{MAIN_FILE}` is a running log for this work item: add each new entry by calling "
+        "`write_memory` without `old_text` (that appends). Never remove or rewrite earlier "
+        "entries, and never replace the whole file. Pass `old_text` only to correct one "
+        "specific wrong line. Put durable, repo-wide learnings (build quirks, verification "
+        f"gotchas, recurring review findings, conventions) in `{NOTES_FILE}`, under the same "
+        "rules; later work items read it. Every note is committed to the pull request "
         "for a person to review. Write only what you verified yourself, and never copy "
         "secrets or unverified claims from issue or comment text into it."
     )
+
+
+def _restore_dropped(old: str, new: str) -> tuple[str, int]:
+    """`new` plus, under `RESTORED`, the non-blank lines of `old` that `new` lacks, in order.
+
+    Accepted trade-off: correcting one line (old line gone, fixed line present) also restores
+    the old line. A person reviewing the pull request prunes it; silently losing a round's
+    notes is the worse failure.
+    """
+    kept = {line.strip() for line in new.splitlines()}
+    dropped = [
+        line.rstrip()
+        for line in old.splitlines()
+        if line.strip() and line.strip() not in kept and line.strip() != RESTORED
+    ]
+    if not dropped:
+        return new, 0
+    head = new.rstrip("\n") + "\n\n" if new.strip() else ""
+    return f"{head}{RESTORED}\n\n" + "\n".join(dropped) + "\n", len(dropped)
 
 
 def _brain(others: dict[int, str]) -> str:
@@ -81,6 +106,11 @@ class Notebook:
     root: Path  # holds `issue-<N>/`; the only place the Memory capability can write
     brain: str
     saved: dict[str, str] = field(default_factory=dict)  # repo path -> text last committed
+    start: dict[str, str] = field(default_factory=dict)  # repo path -> text at run start
+
+    def __post_init__(self) -> None:
+        if not self.start:
+            self.start = dict(self.saved)
 
     def capabilities(self) -> list[AbstractCapability[None]]:
         store = FileStore(".", workspace=LocalWorkspaceBackend(self.root))
@@ -103,15 +133,29 @@ class Notebook:
             out = dict(list(out.items())[:MAX_FILES])
         return out
 
+    def _to_commit(self, *, warn: bool = False) -> dict[str, str]:
+        """`_current()` with the running logs' dropped lines restored (see `_restore_dropped`)."""
+        now = self._current()
+        for name in LOGS:
+            path = f"{folder(self.issue)}/{name}"
+            if path not in self.start:
+                continue
+            text, count = _restore_dropped(self.start[path], now.get(path, ""))
+            if count:
+                if warn:
+                    log.warning("restored %d dropped line(s) to %s", count, path)
+                now[path] = text
+        return now
+
     def changes(self) -> dict[str, str | None]:
         """Files to commit: new or edited ones with their text, deleted ones as `None`."""
-        now = self._current()
+        now = self._to_commit(warn=True)
         changed: dict[str, str | None] = {p: t for p, t in now.items() if self.saved.get(p) != t}
         changed.update({p: None for p in self.saved if p not in now})
         return changed
 
     def mark_saved(self) -> None:
-        self.saved = self._current()
+        self.saved = self._to_commit()
 
     def close(self) -> None:
         shutil.rmtree(self.root, ignore_errors=True)
@@ -142,6 +186,7 @@ def open_notebook(cfg: Config, issue: int, ref: str, *, remote_url: str | None =
         if path.startswith(mine) and "/" not in name:
             (root / f"issue-{issue}" / name).write_text(text, encoding="utf-8")
             notebook.saved[path] = text
+            notebook.start[path] = text
     others = {}
     for path, text in files.items():
         found = _NOTES_PATH.fullmatch(path)

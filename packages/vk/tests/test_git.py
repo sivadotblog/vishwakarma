@@ -1,3 +1,4 @@
+import dataclasses
 import subprocess
 from pathlib import Path
 
@@ -212,3 +213,23 @@ def test_git_tools_surface(tmp_path: Path) -> None:
 
 def test_validate_branch_rejects_trailing_newline() -> None:
     assert validate_branch("vk/x\n") is not None
+
+
+def test_commits_use_the_configured_author_and_default_without_one(
+    tmp_path: Path, remote: str
+) -> None:
+    app = dataclasses.replace(
+        make_cfg(tmp_path),
+        bot_name="vk-app[bot]",
+        bot_email="4242+vk-app[bot]@users.noreply.github.com",
+    )
+    for cfg, name, email in (
+        (app, "vk-app[bot]", "4242+vk-app[bot]@users.noreply.github.com"),
+        (make_cfg(tmp_path), "vk[bot]", "vk[bot]@users.noreply.github.com"),
+    ):
+        repo = clone_repo(cfg, remote_url=remote)
+        sh("git", "checkout", "-b", "vk/who", cwd=repo)
+        commit_file(repo, "vk/who", "who.md", "x\n", "who")
+        assert sh("git", "log", "-1", "--format=%an|%ae|%cn|%ce", cwd=repo) == (
+            f"{name}|{email}|{name}|{email}"
+        )

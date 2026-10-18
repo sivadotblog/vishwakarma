@@ -11,7 +11,7 @@ from pydantic_ai.exceptions import UsageLimitExceeded
 from vk.approval import Caller
 from vk.ci_fix import run_ci_fix
 from vk.config import ConfigError, load_config
-from vk.github import GitHub
+from vk.github import GitHub, with_bot_identity
 from vk.pipeline import run_issue
 from vk.pr_review import run_review
 
@@ -43,6 +43,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         cfg = load_config()
         gh = GitHub(cfg)
+        cfg = with_bot_identity(cfg, gh)
         if args.command == "issue":
             print(run_issue(cfg, gh, n, Caller(unattended, issue_number=n)))
         elif args.command == "review":
