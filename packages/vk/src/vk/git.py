@@ -318,7 +318,7 @@ def git_tools(
                     "Push a local branch of the checkout to the factory repository. The branch "
                     "must already exist locally with the work committed and the checks run; "
                     "main and master are refused. After a successful push, report the branch "
-                    "name in your structured output so the orchestrator can open the pull "
+                    "name in your structured output so the factory can open the pull "
                     "request."
                 ),
                 parameters=branch_schema,
