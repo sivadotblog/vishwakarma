@@ -9,17 +9,18 @@ This guide details advanced execution options, environment variables, security c
 
 Vishwakarma is configured via environment variables:
 
-| Variable               | Required | Description                                                                                                  | Default                                   |
-| ---------------------- | -------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------- |
-| `GITHUB_TOKEN`         | Yes      | Token with access to read/write repository contents, issues, and pull requests.                              | —                                         |
-| `VK_MODEL`             | Yes      | Primary model identifier passed to LiteLLM (e.g. `anthropic/claude-3-5-sonnet`).                             | —                                         |
-| `VK_MODEL_<CLAN>`      | No       | Per-clan model overrides (`ORCHESTRATOR`, `CLASSIFIER`, `RESEARCHER`, `ANALYST`, `IMPLEMENTER`, `REVIEWER`). | `VK_MODEL`                                |
-| `VK_REPO`              | No       | Target repository formatted as `owner/repo`.                                                                 | Inferred from `git remote get-url origin` |
-| `VK_SETUP_COMMAND`     | No       | Command executed in fresh repository clones before processing.                                               | None                                      |
-| `VK_BRANCH_PREFIX`     | No       | Prefix for factory feature branches.                                                                         | `vk/`                                     |
-| `VK_STATE_DIR`         | No       | Directory for execution state, clones, and logs.                                                             | `~/.vk`                                   |
-| `VK_MAX_OUTPUT_TOKENS` | No       | Maximum token budget allowed per agent execution.                                                            | `100000`                                  |
-| `VK_LOG_LEVEL`         | No       | Stderr logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`).                                              | `INFO`                                    |
+| Variable               | Required | Description                                                                                                                                    | Default                                   |
+| ---------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| `GITHUB_TOKEN`         | Yes      | Token with access to read/write repository contents, issues, and pull requests.                                                                | —                                         |
+| `VK_MODEL`             | Yes      | Primary model identifier in PydanticAI `provider:model` syntax (e.g. `google:gemini-3.5-flash` or `anthropic:claude-3-5-sonnet`).              | —                                         |
+| `VK_MODEL_<CLAN>`      | No       | Per-clan model overrides (`CLASSIFIER`, `RESEARCHER`, `ANALYST`, `IMPLEMENTER`, `REVIEWER`, `TRIAGE`, `PR_WRITER`, `DECIDER`, `CI_DIAGNOSER`). | `VK_MODEL`                                |
+| `VK_BOT_LOGIN`         | No       | GitHub login for the bot user.                                                                                                                 | `None`                                    |
+| `VK_REPO`              | No       | Target repository formatted as `owner/repo`.                                                                                                   | Inferred from `git remote get-url origin` |
+| `VK_SETUP_COMMAND`     | No       | Command executed in fresh repository clones before processing.                                                                                 | None                                      |
+| `VK_BRANCH_PREFIX`     | No       | Prefix for factory feature branches.                                                                                                           | `vk/`                                     |
+| `VK_STATE_DIR`         | No       | Directory for execution state, clones, and logs.                                                                                               | `~/.vk`                                   |
+| `VK_MAX_OUTPUT_TOKENS` | No       | Maximum token budget allowed per agent execution.                                                                                              | `100000`                                  |
+| `VK_LOG_LEVEL`         | No       | Stderr logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`).                                                                                | `INFO`                                    |
 
 ## GitHub Identity & Authentication
 
@@ -55,7 +56,7 @@ To execute Vishwakarma on a local clone for testing or debugging:
 
 ```bash
 export GITHUB_TOKEN="your-github-token"
-export VK_MODEL="anthropic/claude-3-5-sonnet"
+export VK_MODEL="google:gemini-3.5-flash"
 export ANTHROPIC_API_KEY="your-api-key"
 
 # Process issue #42 locally

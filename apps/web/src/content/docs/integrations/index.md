@@ -1,9 +1,9 @@
 ---
 title: Integrations
-description: Integrating Vishwakarma with GitHub Actions workflows and LiteLLM model providers.
+description: Integrating Vishwakarma with GitHub Actions workflows and PydanticAI model providers.
 ---
 
-Vishwakarma integrates with GitHub Actions CI/CD pipelines and LLM providers via LiteLLM.
+Vishwakarma integrates with GitHub Actions CI/CD pipelines and LLM providers via PydanticAI.
 
 ## GitHub Actions Integration
 
@@ -47,26 +47,19 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.VK_GITHUB_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          VK_MODEL: ${{ vars.VK_MODEL || 'gemini/gemini-3.5-flash' }}
+          VK_MODEL: ${{ vars.VK_MODEL || 'google:gemini-3.5-flash' }}
           VK_REPO: ${{ github.repository }}
           VK_STATE_DIR: ${{ runner.temp }}/vk-state
         run: uv run --package vk vk issue ${{ github.event.issue.number }} --unattended
 ```
 
-### Review & Revision Workflows (`vishwakarma-review.yml`)
+## Model Providers (PydanticAI)
 
-For handling review comments on open factory PRs or fixing broken CI builds, workflows invoke:
+Vishwakarma uses PydanticAI as an abstraction layer across model providers. Supported providers and required environment variables include:
 
-- **Review Fixes**: `uv run --package vk vk review <PR_NUMBER> --unattended`
-- **CI Fixes**: `uv run --package vk vk ci-fix <PR_NUMBER> --unattended`
-
-## Model Providers (LiteLLM)
-
-Vishwakarma uses LiteLLM as an abstraction layer across model providers. Supported providers and required environment variables include:
-
-| Provider          | Model Example                 | API Key Variable                   |
-| ----------------- | ----------------------------- | ---------------------------------- |
-| **Anthropic**     | `anthropic/claude-3-5-sonnet` | `ANTHROPIC_API_KEY`                |
-| **Google Gemini** | `gemini/gemini-3.5-flash`     | `GEMINI_API_KEY`                   |
-| **OpenAI**        | `openai/gpt-4o`               | `OPENAI_API_KEY`                   |
-| **Azure OpenAI**  | `azure/<deployment-name>`     | `AZURE_API_KEY` & `AZURE_API_BASE` |
+| Provider          | Model Example                    | API Key Variable                   |
+| ----------------- | -------------------------------- | ---------------------------------- |
+| **Anthropic**     | `anthropic:claude-3-5-sonnet`    | `ANTHROPIC_API_KEY`                |
+| **Google Gemini** | `google:gemini-3.5-flash`        | `GEMINI_API_KEY`                   |
+| **OpenAI**        | `openai:gpt-4o`                  | `OPENAI_API_KEY`                   |
+| **Azure OpenAI**  | `azure-openai:<deployment-name>` | `AZURE_API_KEY` & `AZURE_API_BASE` |

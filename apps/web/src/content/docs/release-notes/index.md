@@ -13,7 +13,7 @@ Vishwakarma is active and operates as a monorepo containing the software factory
 
 - **Autonomous Factory Engine (`packages/vk`)**:
   - Five specialized agent clans: Classifier, Researcher, Analyst, Implementer, and Reviewer.
-  - Multi-provider LLM support via LiteLLM (Anthropic Claude, Google Gemini, OpenAI GPT).
+  - Multi-provider LLM support via PydanticAI (Anthropic Claude, Google Gemini, OpenAI GPT).
   - CLI commands: `vk issue`, `vk review`, and `vk ci-fix`.
   - Non-interactive mode via `--unattended` for execution in CI workflows.
 

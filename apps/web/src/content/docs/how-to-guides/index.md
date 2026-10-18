@@ -25,37 +25,40 @@ When Vishwakarma opens a draft pull request:
 
 ## How to Change the LLM Model Used by VK
 
-Vishwakarma uses LiteLLM, allowing integration with model providers like Anthropic, OpenAI, and Gemini.
+Vishwakarma uses PydanticAI, allowing integration with model providers like Anthropic, OpenAI, and Gemini.
 
 ### Default Model Configuration
 
 Set the `VK_MODEL` environment variable (or GitHub Actions variable/secret) to specify the default model for all clans:
 
 ```bash
-export VK_MODEL="anthropic/claude-3-5-sonnet"
+export VK_MODEL="anthropic:claude-3-5-sonnet"
 ```
 
 In GitHub Actions (`.github/workflows/vishwakarma.yml`):
 
 ```yaml
 env:
-  VK_MODEL: ${{ vars.VK_MODEL || 'gemini/gemini-3.5-flash' }}
+  VK_MODEL: ${{ vars.VK_MODEL || 'google:gemini-3.5-flash' }}
 ```
 
 ### Per-Clan Model Overrides
 
 You can assign specific models to individual clans using per-clan environment variables:
 
-- `VK_MODEL_ORCHESTRATOR`
 - `VK_MODEL_CLASSIFIER`
 - `VK_MODEL_RESEARCHER`
 - `VK_MODEL_ANALYST`
 - `VK_MODEL_IMPLEMENTER`
 - `VK_MODEL_REVIEWER`
+- `VK_MODEL_TRIAGE`
+- `VK_MODEL_PR_WRITER`
+- `VK_MODEL_DECIDER`
+- `VK_MODEL_CI_DIAGNOSER`
 
 Example using a lighter model for classification and a larger model for implementation:
 
 ```bash
-export VK_MODEL_CLASSIFIER="gemini/gemini-2.5-flash"
-export VK_MODEL_IMPLEMENTER="anthropic/claude-3-5-sonnet"
+export VK_MODEL_CLASSIFIER="google:gemini-2.5-flash"
+export VK_MODEL_IMPLEMENTER="anthropic:claude-3-5-sonnet"
 ```
