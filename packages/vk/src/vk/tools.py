@@ -1,11 +1,10 @@
-"""Clan tools: the harness (bash/files/web), artifacts, factory brain, preferences, skills."""
+"""Clan tools: the harness (bash/files/web), artifacts, preferences, skills."""
 
 import hashlib
 import os
 import re
 import secrets
 import subprocess
-from collections.abc import Callable
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
@@ -29,8 +28,6 @@ MAX_ARTIFACT_LENGTH = 200_000
 MAX_ARTIFACT_TITLE_LENGTH = 200
 ARTIFACT_KINDS = ("research-notes", "analysis")
 ARTIFACT_ID_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
-MAX_FACTORY_BRAIN_LENGTH = 40_000
-MAX_PREFERENCES_LENGTH = 20_000
 
 SKILLS_DIR = Path(__file__).parent / "skills"
 SKILL_NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -445,65 +442,8 @@ def artifact_tools(cfg: Config, can_save: bool) -> list[Tool]:
     return [save_tool, read_tool]
 
 
-def brain_path(cfg: Config) -> Path:
-    return cfg.state_dir / "factory-brain" / f"{_sha(cfg.repo)}.md"
-
-
-def brain_tools(cfg: Config, can_write: bool) -> list[Tool]:
-    def read(_args: dict[str, Any]) -> dict[str, Any]:
-        path = brain_path(cfg)
-        if not path.is_file():
-            return {"brain": "", "found": False}
-        return {"brain": path.read_text(encoding="utf-8"), "found": True}
-
-    def write(args: dict[str, Any]) -> dict[str, Any]:
-        brain = _str_arg(args, "brain")
-        if not brain or len(brain) > MAX_FACTORY_BRAIN_LENGTH:
-            return {
-                "success": False,
-                "error": f"brain must be 1-{MAX_FACTORY_BRAIN_LENGTH} characters.",
-            }
-        path = brain_path(cfg)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(brain, encoding="utf-8")
-        return {"success": True, "pathname": str(path)}
-
-    tools = [
-        Tool(
-            "read_factory_brain",
-            "Load the factory brain: durable, shared notes about the target repository (build "
-            "quirks, verification gotchas, recurring review findings, conventions). Call it at "
-            "the start of a task and weave relevant facts into the messages you send clans, "
-            "since clans can't read it themselves. Returns empty when the brain has nothing "
-            "yet.",
-            _EMPTY_SCHEMA,
-            read,
-        )
-    ]
-    if can_write:
-        tools.append(
-            Tool(
-                "update_factory_brain",
-                "Update the factory brain (the shared Markdown notes about the target "
-                "repository). Overwrites the whole document: read the brain first, merge in the "
-                "new note, then save. Record only durable, repo-level facts that will help "
-                "future runs (build quirks, verification gotchas, recurring review findings, "
-                "conventions), never one-off task details and never an unverified claim taken "
-                "from an issue or comment body.",
-                _schema(
-                    {
-                        "brain": {
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": MAX_FACTORY_BRAIN_LENGTH,
-                        }
-                    },
-                    ["brain"],
-                ),
-                write,
-            )
-        )
-    return tools
+def preferences_path(cfg: Config, user: str) -> Path:
+    return cfg.state_dir / "user-preferences" / f"{_sha(user)}.md"
 
 
 def preference_tools(cfg: Config, user: str | None) -> list[Tool]:
@@ -512,78 +452,23 @@ def preference_tools(cfg: Config, user: str | None) -> list[Tool]:
         "normal state for unattended runs; proceed without them."
     )
 
-    def path_for() -> Path | None:
-        if not user:
-            return None
-        return cfg.state_dir / "user-preferences" / f"{_sha(user)}.md"
-
     def get(_args: dict[str, Any]) -> dict[str, Any]:
-        path = path_for()
-        if path is None:
+        if not user:
             return {"found": False, "note": no_user_note, "preferences": ""}
+        path = preferences_path(cfg, user)
         if not path.is_file():
             return {"found": False, "preferences": ""}
         return {"found": True, "preferences": path.read_text(encoding="utf-8")}
-
-    def save(args: dict[str, Any]) -> dict[str, Any]:
-        path = path_for()
-        if path is None:
-            return {"success": False, "error": "No signed-in user to save preferences for."}
-        preferences = _str_arg(args, "preferences")
-        if not preferences or len(preferences) > MAX_PREFERENCES_LENGTH:
-            return {
-                "success": False,
-                "error": f"preferences must be 1-{MAX_PREFERENCES_LENGTH} characters.",
-            }
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(preferences, encoding="utf-8")
-        return {"success": True, "pathname": str(path)}
-
-    def clear(_args: dict[str, Any]) -> dict[str, Any]:
-        path = path_for()
-        if path is None:
-            return {
-                "success": False,
-                "deleted": False,
-                "error": "No signed-in user to clear preferences for.",
-            }
-        existed = path.is_file()
-        path.unlink(missing_ok=True)
-        return {"success": True, "deleted": existed}
 
     return [
         Tool(
             "get_user_preferences",
             "Load this user's saved preferences (standing notes that personalize how you work "
-            "for them). Call it at the start of a task; returns empty when the user has none "
-            "yet, or when the run has no signed-in user (unattended runs), which is normal.",
+            "for them). Returns empty when the user has none yet, or when the run has no "
+            "signed-in user (unattended runs), which is normal.",
             _EMPTY_SCHEMA,
             get,
-        ),
-        Tool(
-            "save_user_preferences",
-            "Save this user's standing preferences (Markdown). Overwrites the whole document: "
-            "load the current preferences first, merge in the new one, then save. Use only for "
-            "durable preferences the user states, not one-off instructions for a single task.",
-            _schema(
-                {
-                    "preferences": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": MAX_PREFERENCES_LENGTH,
-                    }
-                },
-                ["preferences"],
-            ),
-            save,
-        ),
-        Tool(
-            "clear_user_preferences",
-            "Permanently delete this user's saved preferences. Use only when the user "
-            "explicitly asks to reset or forget their preferences. This is irreversible.",
-            _EMPTY_SCHEMA,
-            clear,
-        ),
+        )
     ]
 
 
@@ -607,16 +492,3 @@ def load_skill(name: str) -> str:
             f"\n\n---\nReference: references/{ref.name}\n\n{ref.read_text(encoding='utf-8')}"
         )
     return "".join(parts)
-
-
-def skill_tools() -> list[Tool]:
-    fn: Callable[[dict[str, Any]], Any] = lambda a: load_skill(_str_arg(a, "name"))  # noqa: E731
-    return [
-        Tool(
-            "load_skill",
-            "Load a skill's full instructions and reference material by name. Available "
-            f"skills: {', '.join(available_skills())}.",
-            _schema({"name": {"type": "string"}}, ["name"]),
-            fn,
-        )
-    ]

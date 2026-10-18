@@ -8,7 +8,7 @@ Monorepo demonstrating a fully autonomous development lifecycle: issue → triag
 | ------------------- | -------------------------------------------------------- | ------------------------------------------- |
 | `apps/web`          | Frontend, Astro Starlight                                | npm workspaces (`-w web`), `astro check`    |
 | `apps/api`          | Python backend (`src/` layout, package `api`)            | uv workspace, ruff, mypy `--strict`, pytest |
-| `packages/vk` | Vishwakarma (VK), the software factory (issue → PR → review-fix), LiteLLM + requests | uv workspace, ruff, mypy `--strict`, pytest |
+| `packages/vk` | Vishwakarma (VK), the software factory (issue → PR → review-fix), PydanticAI + requests | uv workspace, ruff, mypy `--strict`, pytest |
 
 **Vishwakarma**, or **VK**, is this repo's software factory. Labeling a GitHub issue `vk` triggers `.github/workflows/vishwakarma.yml`, which runs VK on it and opens a draft PR from a `vk/*` branch. "Hand it to VK" means label the issue `vk`.
 

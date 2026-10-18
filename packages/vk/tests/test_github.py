@@ -101,6 +101,33 @@ def test_review_comments_answered() -> None:
     answered = {c["id"]: c["answered"] for c in out}
     assert answered == {1: True, 2: True, 3: False, 4: True, 5: True, 6: False}
     assert out[0]["user"] == "alice" and out[0]["line"] == 3
+    assert out[0]["user_type"] is None  # the fake comments carry no account type
+
+
+def _bot_tools(comments: list[dict[str, Any]]) -> dict[str, Tool]:
+    cfg = Config(**{**CFG.__dict__, "bot_login": "vk-app[bot]"})
+    session = FakeSession({("GET", "/repos/o/r/pulls/7/comments"): FakeResponse(200, comments)})
+    return {t.name: t for t in github_tools(GitHub(cfg, session), ATTENDED, None)}
+
+
+def test_me_uses_bot_login_without_http() -> None:
+    session = FakeSession({})
+    gh = GitHub(Config(**{**CFG.__dict__, "bot_login": "vk-app[bot]"}), session)
+    assert gh.me() == "vk-app[bot]"
+    assert session.calls == []
+
+
+def test_owner_comment_unanswered_when_bot_login_differs() -> None:
+    out = _bot_tools([_review_comment(1, "owner")])["github__listReviewComments"].fn(
+        {"pull_number": 7}
+    )
+    assert out[0]["answered"] is False
+
+
+def test_owner_comment_answered_by_later_bot_reply() -> None:
+    comments = [_review_comment(1, "owner"), _review_comment(2, "vk-app[bot]", 1)]
+    out = _bot_tools(comments)["github__listReviewComments"].fn({"pull_number": 7})
+    assert {c["id"]: c["answered"] for c in out} == {1: True, 2: True}
 
 
 def test_reply_to_review_comment() -> None:
@@ -183,3 +210,17 @@ def test_ci_failure_context_collects_failed_runs() -> None:
     assert [r["name"] for r in out["failed_check_runs"]] == ["lint"]
     assert out["failed_check_runs"][0]["log_tail"].endswith("TAIL")
     assert len(out["failed_check_runs"][0]["log_tail"]) == 4000
+
+
+def test_collaborator_permission_reports_the_role_and_treats_404_as_none() -> None:
+    session = FakeSession(
+        {
+            ("GET", "/repos/o/r/collaborators/alice/permission"): FakeResponse(
+                200, {"role_name": "triage", "permission": "read"}
+            )
+        }
+    )
+    get = tools(session)["github__getCollaboratorPermission"].fn
+
+    assert get({"username": "alice"}) == {"login": "alice", "role_name": "triage"}
+    assert get({"username": "mallory"}) == {"login": "mallory", "role_name": "none"}

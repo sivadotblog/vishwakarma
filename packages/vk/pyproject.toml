@@ -1,11 +1,15 @@
 [project]
 name = "vk"
 version = "0.1.0"
-description = "Autonomous issue -> PR -> review-fix software factory, any LLM via LiteLLM"
+description = "Autonomous issue -> PR -> review-fix software factory on PydanticAI"
 readme = "README.md"
 authors = [{ name = "sivadotblog", email = "sivanandha@gmail.com" }]
 requires-python = ">=3.12"
-dependencies = ["litellm", "requests"]
+dependencies = [
+    "pydantic-ai-harness>=0.57.0",
+    "pydantic-ai-slim[anthropic,google]>=2.57.0",
+    "requests",
+]
 
 [project.scripts]
 vk = "vk.cli:main"

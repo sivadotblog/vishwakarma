@@ -2,12 +2,12 @@
 
 import re
 import shutil
-from collections.abc import Callable
+from collections.abc import Mapping
 from typing import Any
 
 from vk import git
 from vk.config import Config
-from vk.tooling import Tool, ToolError
+from vk.tooling import ToolError
 
 Data = dict[str, Any]
 ROUND_HEADING = "## Review round"
@@ -100,7 +100,14 @@ def _next_round(existing: str) -> int:
     return len(re.findall(rf"^{ROUND_HEADING} \d+", existing, re.MULTILINE)) + 1
 
 
-def publish(cfg: Config, args: Data, *, remote_url: str | None = None) -> Data:
+def publish(
+    cfg: Config,
+    args: Data,
+    *,
+    remote_url: str | None = None,
+    files: Mapping[str, str | None] | None = None,
+) -> Data:
+    """Commit the run log; `files` (repo path -> text, `None` deletes) ride in the same commit."""
     issue = args.get("issue_number")
     branch = args.get("branch")
     mode = args.get("mode", "write")
@@ -134,7 +141,9 @@ def publish(cfg: Config, args: Data, *, remote_url: str | None = None) -> Data:
             content = existing.rstrip("\n") + "\n" + render_review_round(int(round_no), args)
             message = f"docs: append review round {round_no} to factory run log for #{issue}"
         try:
-            sha = git.commit_file(repo_dir, branch, path, content, message, cfg=cfg)
+            sha = git.commit_files(
+                repo_dir, branch, {path: content, **(files or {})}, message, cfg=cfg
+            )
         except git.GitError as exc:
             raise ToolError(str(exc)) from None
         pushed = git.push_branch(cfg, repo_dir, branch, remote_url=remote_url)
@@ -143,34 +152,3 @@ def publish(cfg: Config, args: Data, *, remote_url: str | None = None) -> Data:
         return {"path": path, "sha": sha, "branch": branch}
     finally:
         shutil.rmtree(repo_dir.parent, ignore_errors=True)
-
-
-_OBJ: Data = {"type": "object"}
-
-
-def publish_run_log_tool(cfg: Config, remote_url: str | None = None) -> Tool:
-    fn: Callable[[Data], Any] = lambda a: publish(cfg, a, remote_url=remote_url)  # noqa: E731
-    return Tool(
-        "publish_run_log",
-        "Commit the factory run log docs/factory/issue-<N>.md to the pushed feature branch. "
-        "mode write (first pass, before opening the pull request) needs classification, "
-        "analysis, implementation and review, as the clans returned them. mode append adds a "
-        "'Review round' section to the existing log; pass implementation/review from the "
-        "revision and notes with the per-comment decisions. Returns the path and commit sha.",
-        {
-            "type": "object",
-            "properties": {
-                "issue_number": {"type": "integer"},
-                "branch": {"type": "string", "minLength": 1},
-                "classification": _OBJ,
-                "analysis": _OBJ,
-                "implementation": _OBJ,
-                "review": _OBJ,
-                "mode": {"type": "string", "enum": ["write", "append"]},
-                "round": {"type": "integer"},
-                "notes": {"type": "string"},
-            },
-            "required": ["issue_number", "branch", "mode"],
-        },
-        fn,
-    )
