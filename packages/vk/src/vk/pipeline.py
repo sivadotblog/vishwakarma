@@ -33,6 +33,7 @@ from vk.tools import load_skill, preference_tools
 log = logging.getLogger(__name__)
 
 MAX_REVIEW_CYCLES = 2
+MAX_CI_FIX_ATTEMPTS = 2
 STATUS_LABELS = ("vk:in-progress", "vk:pr-open", "vk:needs-info", "vk:blocked")
 IN_PROGRESS, PR_OPEN, NEEDS_INFO, BLOCKED = STATUS_LABELS
 
@@ -81,7 +82,7 @@ class Stages:
             raise TypeError(f"clan {name} returned {type(result).__name__}, not {out.__name__}")
         return result
 
-    def agent[T: BaseModel](
+    def agent[T](
         self, name: str, out: type[T], instructions: str, message: str, tools: list[Tool]
     ) -> T:
         return _attempt(
@@ -98,19 +99,27 @@ class Stages:
         )
 
 
-class IssueOps:
-    """The issue's GitHub reads and writes, all through the guarded `github__*` tools."""
+class Ops:
+    """A run's GitHub reads and writes, all through the guarded `github__*` tools."""
 
-    def __init__(self, gh: GitHub, caller: Caller, confirm: Confirm | None, number: int) -> None:
-        self.number = number
+    def __init__(self, gh: GitHub, caller: Caller, confirm: Confirm | None) -> None:
+        self.gh = gh
         self._tools = {t.name: t for t in github_tools(gh, caller, confirm)}
-        self.status: str | None = None
 
     def call(self, tool: str, /, **args: Any) -> Any:
         return self._tools[PREFIX + tool].fn(args)
 
     def read_tools(self) -> list[Tool]:
         return [t for t in self._tools.values() if t.name.removeprefix(PREFIX) in READS]
+
+
+class IssueOps(Ops):
+    """The intake issue's status labels and comments."""
+
+    def __init__(self, gh: GitHub, caller: Caller, confirm: Confirm | None, number: int) -> None:
+        super().__init__(gh, caller, confirm)
+        self.number = number
+        self.status: str | None = None
 
     def comment(self, body: str) -> None:
         self.call("addIssueComment", issue_number=self.number, body=body)
@@ -138,7 +147,30 @@ class IssueOps:
         return True
 
 
-def _dump(model: BaseModel) -> str:
+class PrOps(Ops):
+    """The pull request's context and comments (review and CI-fix runs)."""
+
+    def __init__(self, gh: GitHub, caller: Caller, confirm: Confirm | None, number: int) -> None:
+        super().__init__(gh, caller, confirm)
+        self.number = number
+
+    def context(self) -> dict[str, Any]:
+        """The pull request with its issue comments and reviews, read fresh."""
+        ctx: dict[str, Any] = self.call("getPullRequestContext", pull_number=self.number)
+        return ctx
+
+    def comment(self, body: str) -> None:
+        self.call("addPullRequestComment", pull_number=self.number, body=body)
+
+    def my_comments(self, ctx: dict[str, Any]) -> list[str]:
+        """Bodies of the PR comments in `ctx` that VK itself posted."""
+        me = self.gh.me()
+        return [
+            c.get("body") or "" for c in ctx["comments"] if (c.get("user") or {}).get("login") == me
+        ]
+
+
+def dump(model: BaseModel) -> str:
     return json.dumps(model.model_dump(mode="json", by_alias=True), indent=2)
 
 
@@ -162,11 +194,11 @@ def _artifact_line(kind: str, artifact_id: str | None) -> str:
     return f"\n\n{kind} artifact id: {artifact_id} (open it with read_artifact before you start)."
 
 
-def _section(title: str, body: str) -> str:
+def section(title: str, body: str) -> str:
     return f"## {title}\n\n{body}"
 
 
-def _instructions(cfg: Config, name: str, *extra: str) -> str:
+def agent_instructions(cfg: Config, name: str, *extra: str) -> str:
     """Agent prompt, then any extra text, then the shared writing style."""
     parts = [(PROMPTS_DIR / f"{name}.md").read_text(encoding="utf-8").replace("{repo}", cfg.repo)]
     parts += extra
@@ -174,7 +206,7 @@ def _instructions(cfg: Config, name: str, *extra: str) -> str:
     return "\n\n".join(p.strip() for p in parts) + "\n"
 
 
-def _findings(review: Review) -> str:
+def review_findings(review: Review) -> str:
     lines = [f"- {f}" for f in review.blocking_findings]
     lines += [
         f"- Failed criterion: {c.criterion} ({c.evidence})"
@@ -193,26 +225,48 @@ class LoopResult:
     revisions: int
 
 
+def _require_pushed(impl: Implementation, branch: str | None) -> None:
+    """Fail the run when the implementer's work is not on the branch the caller expects."""
+    problem = None
+    if not impl.pushed:
+        why = "; ".join(impl.known_limitations) or "no reason given"
+        problem = f"the implementer did not push branch `{impl.branch}`: {why}"
+    elif branch is not None and impl.branch != branch:
+        problem = f"the implementer pushed `{impl.branch}`, not the branch `{branch}`"
+    if problem:
+        cause = RuntimeError(problem)
+        raise StageFailed("implementer", cause) from cause
+
+
 def implement_and_review(
     stages: Stages,
     task: str,
     brief: str,
     *,
     progress: Callable[[str], None] | None = None,
+    branch: str | None = None,
 ) -> LoopResult:
     """Implementer then reviewer, with up to MAX_REVIEW_CYCLES revisions on `request_changes`.
 
     `task` is the implementer's self-contained first message and `brief` the context the
     reviewer needs (work item, criteria, artifact ids); the implementation report is appended
-    for it. A `reject` verdict stops at once: iteration will not fix a wrong approach.
+    for it. A `reject` verdict stops at once: iteration will not fix a wrong approach. An
+    implementation that is not pushed (or, with `branch`, not on that branch) fails the stage
+    instead of reaching the reviewer.
     """
-    impl = stages.clan("implementer", task, Implementation)
+
+    def implement(message: str) -> Implementation:
+        impl = stages.clan("implementer", message, Implementation)
+        _require_pushed(impl, branch)
+        return impl
+
+    impl = implement(task)
     revisions = 0
     while True:
         review_message = "\n\n".join(
             [
                 brief,
-                _section("Implementer report", _dump(impl)),
+                section("Implementer report", dump(impl)),
                 f"Review the branch `{impl.branch}` (base `{impl.base}`).",
             ]
         )
@@ -227,17 +281,17 @@ def implement_and_review(
         revision = "\n\n".join(
             [
                 task,
-                _section(
+                section(
                     "Revision requested",
                     f"The work is already on branch `{impl.branch}`. Fetch it with "
                     "checkout_branch, address every finding below (fix it, or record in "
                     "`deviations` why it should stand), and push to the same branch.",
                 ),
-                _section("Your previous implementation report", _dump(impl)),
-                _section("Reviewer findings", _findings(review)),
+                section("Your previous implementation report", dump(impl)),
+                section("Reviewer findings", review_findings(review)),
             ]
         )
-        impl = stages.clan("implementer", revision, Implementation)
+        impl = implement(revision)
 
 
 def _preferences(cfg: Config, caller: Caller) -> str:
@@ -317,7 +371,7 @@ def _run(
     triage = stages.agent(
         "triage",
         Triage,
-        _instructions(cfg, "triage", load_skill("triaging-issues")),
+        agent_instructions(cfg, "triage", load_skill("triaging-issues")),
         f"{issue}\n\n## Existing labels\n\n" + ("\n".join(repo_labels) or "(none)"),
         ops.read_tools(),
     )
@@ -360,16 +414,16 @@ def _run(
         f"Classified as {c.type} ({c.priority} priority, {c.complexity}) in {c.affected_area}. "
         + ("Researching first, then planning." if triage.needs_research else "Planning next.")
     )
-    context = [issue, _section("Classification", _dump(classification))]
+    context = [issue, section("Classification", dump(classification))]
 
     # 3. Research (only when triage asks), then analysis.
     research: Research | None = None
     if triage.needs_research:
         question = triage.research_question or "Verify the facts this issue depends on."
         research = stages.clan(
-            "researcher", "\n\n".join([*context, _section("Research question", question)]), Research
+            "researcher", "\n\n".join([*context, section("Research question", question)]), Research
         )
-        context.append(_section("Research", _dump(research)))
+        context.append(section("Research", dump(research)))
     analysis_message = "\n\n".join(context)
     if research:
         analysis_message += _artifact_line("Research", research.artifact_id)
@@ -380,7 +434,7 @@ def _run(
     )
 
     # 4. Implement and review.
-    plan = [*context, _section("Analysis", _dump(analysis))]
+    plan = [*context, section("Analysis", dump(analysis))]
     artifact = _artifact_line("Analysis", analysis.artifact_id)
     task = "\n\n".join(["Implement this work item.", *plan]) + artifact
     brief = "\n\n".join(["Review this work item.", *plan]) + artifact
@@ -391,7 +445,7 @@ def _run(
             f"The reviewer still has unresolved findings after {result.revisions} "
             f"revision(s) (verdict: {review.verdict}), so I did not open a pull request. "
             f"The work is on branch `{impl.branch}`.\n\n{review.summary}\n\n"
-            f"Unresolved findings:\n\n{_findings(review)}"
+            f"Unresolved findings:\n\n{review_findings(review)}"
         )
         ops.set_status(BLOCKED)
         return (
@@ -419,15 +473,17 @@ def _run(
     pr_message = "\n\n".join(
         [
             *plan,
-            _section("Implementer report", _dump(impl)),
-            _section("Reviewer verdict", _dump(review)),
+            section("Implementer report", dump(impl)),
+            section("Reviewer verdict", dump(review)),
             f"The run log is `{runlog.log_path(number)}` on branch `{impl.branch}`.",
         ]
     )
     pr = stages.agent(
         "pr_writer",
         PrBody,
-        _instructions(cfg, "pr_writer", load_skill("writing-quality"), _preferences(cfg, caller)),
+        agent_instructions(
+            cfg, "pr_writer", load_skill("writing-quality"), _preferences(cfg, caller)
+        ),
         pr_message,
         [],
     )

@@ -129,3 +129,33 @@ def implementer_turns(*first: tuple[str, dict[str, Any]], prefix: str = "") -> l
         [("push_branch", {"branch": BRANCH})],
         [("submit", IMPL)],
     ]
+
+
+def seed_branch(remote: Path, tmp_path: Path) -> None:
+    """Push `BRANCH` carrying a run log for issue 7, as the issue pipeline leaves it."""
+    work = tmp_path / "work"
+    sh("git", "clone", str(remote), str(work))
+    sh("git", "checkout", "-qb", BRANCH, cwd=work)
+    (work / "docs/factory").mkdir(parents=True)
+    (work / "docs/factory/issue-7.md").write_text("# Factory run log: issue #7\n")
+    sh("git", "add", ".", cwd=work)
+    sh("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "log", cwd=work)
+    sh("git", "push", "origin", BRANCH, cwd=work)
+
+
+def branch_sha(remote: Path) -> str:
+    return sh("git", "--git-dir", str(remote), "rev-parse", f"refs/heads/{BRANCH}")
+
+
+class PrSession(FakeSession):
+    """FakeSession whose PR 9 head sha follows `BRANCH` on the bare remote, so pushes move it."""
+
+    def __init__(self, routes: dict[tuple[str, str], Any], remote: Path) -> None:
+        super().__init__(routes)
+        self.remote = remote
+
+    def request(self, method: str, url: str, **kw: Any) -> Any:  # type: ignore[override]
+        key = ("GET", "/repos/o/r/pulls/9")
+        if key in self.routes:
+            self.routes[key]["head"]["sha"] = branch_sha(self.remote)
+        return super().request(method, url, **kw)

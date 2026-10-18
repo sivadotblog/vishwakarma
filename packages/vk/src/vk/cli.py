@@ -12,7 +12,7 @@ from vk.config import ConfigError, load_config
 from vk.llm import BudgetExceeded
 from vk.orchestrator import run_vk
 
-MAX_CI_FIX_ATTEMPTS = 2
+MAX_CI_FIX_ATTEMPTS = pipeline.MAX_CI_FIX_ATTEMPTS
 MAX_REVIEW_CYCLES = pipeline.MAX_REVIEW_CYCLES
 STATUS_LABELS = pipeline.STATUS_LABELS
 

@@ -21,6 +21,7 @@ from .helpers import (
     ANALYSIS,
     BRANCH,
     CLS,
+    IMPL,
     REVIEW,
     Call,
     FakeSession,
@@ -265,6 +266,22 @@ def test_review_failing_after_max_revisions_blocks_without_a_pr(cfg: Config, rem
     assert "Analysis artifact id: art-1" in revision
     assert ISSUE_BODY in revision
     assert "no pull request" in reply
+
+
+def test_an_unpushed_implementation_blocks_without_reaching_the_reviewer(
+    cfg: Config, remote: Path
+) -> None:
+    calls: list[Call] = []
+    unpushed = {**IMPL, "pushed": False, "known_limitations": ["push was rejected"]}
+    models = happy_models(calls, implementer=[[("submit", unpushed)]])
+
+    reply, session = start(cfg, remote, models)
+
+    agents = [c.agent for c in calls]
+    assert agents.count("implementer") == 1 and "reviewer" not in agents
+    assert not session.posts("/pulls")
+    assert label_events(session)[-2:] == ["-vk:in-progress", ["vk:blocked"]]
+    assert "did not push" in comment_bodies(session)[-1] and "push was rejected" in reply
 
 
 def test_one_revision_then_approval_opens_the_pr(cfg: Config, remote: Path) -> None:
