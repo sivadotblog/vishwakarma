@@ -51,9 +51,8 @@ You can assign specific models to individual clans using per-clan environment va
 - `VK_MODEL_ANALYST`
 - `VK_MODEL_IMPLEMENTER`
 - `VK_MODEL_REVIEWER`
-- `VK_MODEL_TRIAGE`
+- `VK_MODEL_TRIAGER`
 - `VK_MODEL_PR_WRITER`
-- `VK_MODEL_DECIDER`
 - `VK_MODEL_CI_DIAGNOSER`
 
 Example using a lighter model for classification and a larger model for implementation:

@@ -46,18 +46,18 @@ vk ci-fix <PR_NUMBER> [--unattended]
 
 ## Environment Variables Reference
 
-| Variable               | Required | Default      | Description                                                                                                                             |
-| ---------------------- | -------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `GITHUB_TOKEN`         | Yes      | —            | Authentication token with repository, issue, and PR write access.                                                                       |
-| `VK_MODEL`             | Yes      | —            | Default model identifier in PydanticAI `provider:model` syntax (e.g. `google:gemini-3.5-flash` or `anthropic:claude-3-5-sonnet`).       |
-| `VK_MODEL_<CLAN>`      | No       | `VK_MODEL`   | Per-clan override (`CLASSIFIER`, `RESEARCHER`, `ANALYST`, `IMPLEMENTER`, `REVIEWER`, `TRIAGE`, `PR_WRITER`, `DECIDER`, `CI_DIAGNOSER`). |
-| `VK_BOT_LOGIN`         | No       | `None`       | GitHub login for the bot user.                                                                                                          |
-| `VK_REPO`              | No       | Git `origin` | Target repository specified as `owner/repo`.                                                                                            |
-| `VK_SETUP_COMMAND`     | No       | None         | Setup shell command executed in fresh repository clones.                                                                                |
-| `VK_BRANCH_PREFIX`     | No       | `vk/`        | Branch prefix used for generated feature branches.                                                                                      |
-| `VK_STATE_DIR`         | No       | `~/.vk`      | Storage location for clones, agent state, and working memory.                                                                           |
-| `VK_MAX_OUTPUT_TOKENS` | No       | `100000`     | Maximum token limit per agent execution.                                                                                                |
-| `VK_LOG_LEVEL`         | No       | `INFO`       | Stderr log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`).                                                                                 |
+| Variable               | Required | Default      | Description                                                                                                                       |
+| ---------------------- | -------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| `GITHUB_TOKEN`         | Yes      | —            | Authentication token with repository, issue, and PR write access.                                                                 |
+| `VK_MODEL`             | Yes      | —            | Default model identifier in PydanticAI `provider:model` syntax (e.g. `google:gemini-3.5-flash` or `anthropic:claude-3-5-sonnet`). |
+| `VK_MODEL_<CLAN>`      | No       | `VK_MODEL`   | Per-clan override (`CLASSIFIER`, `RESEARCHER`, `ANALYST`, `IMPLEMENTER`, `REVIEWER`, `TRIAGER`, `PR_WRITER`, `CI_DIAGNOSER`).     |
+| `VK_BOT_LOGIN`         | No       | `None`       | GitHub login for the bot user.                                                                                                    |
+| `VK_REPO`              | No       | Git `origin` | Target repository specified as `owner/repo`.                                                                                      |
+| `VK_SETUP_COMMAND`     | No       | None         | Setup shell command executed in fresh repository clones.                                                                          |
+| `VK_BRANCH_PREFIX`     | No       | `vk/`        | Branch prefix used for generated feature branches.                                                                                |
+| `VK_STATE_DIR`         | No       | `~/.vk`      | Storage location for clones, agent state, and working memory.                                                                     |
+| `VK_MAX_OUTPUT_TOKENS` | No       | `100000`     | Maximum token limit per agent execution.                                                                                          |
+| `VK_LOG_LEVEL`         | No       | `INFO`       | Stderr log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`).                                                                           |
 
 ## Additional Reference Pages
 
