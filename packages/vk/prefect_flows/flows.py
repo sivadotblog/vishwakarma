@@ -1,15 +1,12 @@
 """Prefect flows that run VK on demand: `vk-issue` for an issue, `vk-review` for a PR.
 
-The pull steps in `prefect.yaml` install the toolchain and sync the workspace; each run then
-mints a GitHub App installation token and runs the `vk` CLI as a subprocess. This module runs
-in the Prefect image's Python, so it imports only the stdlib, Prefect, httpx and cryptography
-(via `github_app`), never `vk`. Secrets reach VK only through the subprocess environment and
-are never logged.
+The pull steps in `prefect.yaml` install the toolchain, sync the workspace and install VK into
+the image's Python. Each run mints a GitHub App installation token and calls VK's pipeline
+in-process, with each stage as a Prefect task. Secrets are never logged.
 """
 
 import logging
 import os
-import subprocess
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -21,10 +18,18 @@ from prefect import flow, get_run_logger
 from prefect.blocks.system import Secret
 from prefect.runtime import flow_run
 from prefect.variables import Variable
+from pydantic_ai.exceptions import UsageLimitExceeded
+
+from vk.approval import Caller
+from vk.config import ConfigError, load_config
+from vk.github import GitHub, with_bot_identity
+from vk.pipeline import run_issue
+from vk.pr_review import run_review
 
 # Relative on purpose: Prefect loads this file as a script that supports relative imports, but
 # `packages/vk` is not on its sys.path, so `prefect_flows.github_app` would not resolve there.
 from .github_app import API, AppToken, installation_token
+from .stage_tasks import prefect_stage
 
 REPO = "sivadotblog/vishwakarma"
 DEFAULT_MODEL = "google:gemini-3.5-flash"
@@ -57,10 +62,6 @@ def load_settings() -> Settings:
         gemini_api_key=secret("vk-gemini-api-key"),
         model=str(Variable.get("vk_model", default=DEFAULT_MODEL)),
     )
-
-
-def vk_command(kind: Kind, number: int) -> list[str]:
-    return ["uv", "run", "--package", "vk", "vk", kind, str(number), "--unattended"]
 
 
 def vk_env(
@@ -106,37 +107,39 @@ def post_comment(token: str, number: int, body: str, client: httpx.Client | None
 
 
 def run_vk(kind: Kind, number: int, logger: Log, run_url: str | None) -> str:
-    """Run VK on issue/PR `number` and return its stdout.
+    """Run VK on issue/PR `number` in this process and return its summary.
 
-    Failures before a token exists propagate unchanged. A nonzero VK exit posts a failure
-    comment (best effort) and then raises.
+    Failures before a token exists propagate unchanged. An error that escapes VK posts a
+    failure comment (best effort) and is re-raised; a handled "Stopped: ..." summary is returned.
     """
     settings = load_settings()
     token = installation_token(settings.app_id, settings.private_key, REPO)
     state_dir = Path(tempfile.mkdtemp(prefix="vk-state-"))
     env = vk_env(os.environ, token, settings, state_dir)
-    with tempfile.TemporaryFile("w+") as stdout:
-        process = subprocess.Popen(
-            vk_command(kind, number),
-            cwd=REPO_ROOT,
-            env=env,
-            stdout=stdout,
-            stderr=subprocess.PIPE,
-            text=True,
+    # VK's build_model and its git/make/uv subprocesses read the process environment.
+    os.environ.update(env)
+    logging.getLogger("vk").setLevel(logging.INFO)
+    try:
+        cfg = load_config(env)
+        gh = GitHub(cfg)
+        cfg = with_bot_identity(cfg, gh)
+        if kind == "issue":
+            return run_issue(
+                cfg, gh, number, Caller(True, issue_number=number), stage_wrapper=prefect_stage
+            )
+        return run_review(
+            cfg, gh, number, Caller(True, pr_number=number), stage_wrapper=prefect_stage
         )
-        assert process.stderr is not None
-        for line in process.stderr:
-            logger.info(line.rstrip("\n"))
-        code = process.wait()
-        stdout.seek(0)
-        output = stdout.read().strip()
-    if code != 0:
+    except Exception as error:
+        if isinstance(error, ConfigError):
+            logger.error("Configuration error: %s", error)
+        elif isinstance(error, UsageLimitExceeded):
+            logger.error("Token budget exceeded: %s", error)
         try:
             post_comment(token.token, number, failure_body(run_url))
-        except Exception as error:
-            logger.error("Could not post the failure comment: %s", type(error).__name__)
-        raise RuntimeError(f"vk {kind} {number} exited {code}")
-    return output
+        except Exception as comment_error:
+            logger.error("Could not post the failure comment: %s", type(comment_error).__name__)
+        raise
 
 
 @flow(name="vk-issue", timeout_seconds=3600)

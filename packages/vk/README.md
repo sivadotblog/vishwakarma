@@ -106,7 +106,13 @@ branch, with `/` and capitals slugified. GitHub only offers that once the workfl
 until then, deploy from your machine with the same file:
 `VK_BRANCH=<branch> VK_DEPLOYMENT=<slug> uv run prefect --no-prompt deploy --all --prefect-file packages/vk/prefect_flows/prefect.yaml`.
 Before each run, the pull steps in `prefect.yaml` clone
-that branch, install make, Node 22 and uv, and run `uv sync --locked`.
+that branch, install make, Node 22 and uv, run `uv sync --locked`, and install VK into the
+image's Python so the flow imports it and runs VK in its own process.
+
+Each flow run shows one task per VK stage (`triage`, `classifier`, `analyst`, `implementer`,
+`reviewer`, `pr_writer`, ...), with VK's log lines inside each task. A stage that failed twice
+shows as a Failed task, but the flow still ends Completed with VK's "Stopped: ..." summary, since
+that is VK's failure, not Prefect's. Only an error that escapes VK fails the flow.
 
 Run one:
 
