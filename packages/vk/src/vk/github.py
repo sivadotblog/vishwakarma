@@ -4,7 +4,7 @@ import base64
 import json
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 from urllib.parse import quote
 
@@ -79,6 +79,24 @@ class GitHub:
         if self._login is None:
             self._login = str(self.request("GET", "/user")["login"])
         return self._login
+
+
+def with_bot_identity(cfg: Config, gh: GitHub) -> Config:
+    """`cfg` with the git author set to the `bot_login` user, so GitHub links VK's commits to it.
+
+    The noreply email needs the user's numeric id (`<id>+<login>@users.noreply.github.com`),
+    from `GET /users/{login}`, which an app installation token can call. Without a `bot_login`,
+    or when the lookup fails, `cfg` is returned unchanged and commits keep the default identity.
+    """
+    login = cfg.bot_login
+    if not login:
+        return cfg
+    try:
+        uid = int(gh.request("GET", f"/users/{quote(login, safe='[]')}")["id"])
+    except (ToolError, KeyError, TypeError, ValueError) as exc:
+        log.warning("could not look up %s; commits keep the default author: %s", login, exc)
+        return cfg
+    return replace(cfg, bot_name=login, bot_email=f"{uid}+{login}@users.noreply.github.com")
 
 
 Args = dict[str, Any]

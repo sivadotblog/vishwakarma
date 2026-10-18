@@ -26,7 +26,7 @@ on the PATH.
 | `VK_REPO`                   | Optional `owner/name`; default is read from the `origin` remote. |
 | `VK_SETUP_COMMAND`          | Optional command run in each fresh clone (install deps).   |
 | `VK_BRANCH_PREFIX`          | Default `vk/`.                                             |
-| `VK_BOT_LOGIN`              | Optional login VK acts as, e.g. `my-app[bot]`; default is `GET /user`. Required for GitHub App tokens, which cannot call `/user`. |
+| `VK_BOT_LOGIN`              | Optional login VK acts as, e.g. `my-app[bot]`; default is `GET /user`. Required for GitHub App tokens, which cannot call `/user`. Commits are authored as this bot user (looked up via `GET /users/{login}`); if that fails, as `vk[bot]`. |
 | `VK_STATE_DIR`              | Default `~/.vk` (artifacts, clones, user preferences).     |
 | `VK_MAX_OUTPUT_TOKENS`      | Output token budget per agent run, default 100000.         |
 | `VK_LOG_LEVEL`              | Log level for stderr logs (incl. token usage), default `INFO`. |

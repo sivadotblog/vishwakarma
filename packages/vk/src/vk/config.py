@@ -40,6 +40,8 @@ class Config:
     setup_command: str | None = None
     max_output_tokens: int = 100_000
     bot_login: str | None = None
+    bot_name: str | None = None  # git author name; set from `bot_login` by `with_bot_identity`
+    bot_email: str | None = None
 
     def model_for(self, clan: str) -> str:
         return self.clan_models.get(clan, self.model)

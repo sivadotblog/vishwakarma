@@ -9,7 +9,7 @@ import requests
 
 from vk.approval import Caller
 from vk.config import Config
-from vk.github import GitHub, github_tools
+from vk.github import GitHub, github_tools, with_bot_identity
 from vk.tooling import Tool, ToolError
 
 CFG = Config(repo="o/r", github_token="tok", model="m", clan_models={}, state_dir=Path("/tmp/x"))
@@ -224,3 +224,33 @@ def test_collaborator_permission_reports_the_role_and_treats_404_as_none() -> No
 
     assert get({"username": "alice"}) == {"login": "alice", "role_name": "triage"}
     assert get({"username": "mallory"}) == {"login": "mallory", "role_name": "none"}
+
+
+def _app_cfg() -> Config:
+    return Config(**{**CFG.__dict__, "bot_login": "vk-app[bot]"})
+
+
+def test_bot_identity_comes_from_the_users_endpoint() -> None:
+    session = FakeSession({("GET", "/users/vk-app[bot]"): FakeResponse(200, {"id": 4242})})
+
+    cfg = with_bot_identity(_app_cfg(), GitHub(_app_cfg(), session))
+
+    assert cfg.bot_name == "vk-app[bot]"
+    assert cfg.bot_email == "4242+vk-app[bot]@users.noreply.github.com"
+
+
+def test_bot_identity_is_skipped_without_a_bot_login() -> None:
+    session = FakeSession({})
+
+    assert with_bot_identity(CFG, GitHub(CFG, session)) is CFG
+    assert session.calls == []
+
+
+@pytest.mark.parametrize(
+    "response", [FakeResponse(404, {"message": "Not Found"}), FakeResponse(200, {"login": "x"})]
+)
+def test_bot_identity_falls_back_when_the_lookup_fails(response: FakeResponse) -> None:
+    cfg = _app_cfg()
+    session = FakeSession({("GET", "/users/vk-app[bot]"): response})
+
+    assert with_bot_identity(cfg, GitHub(cfg, session)) is cfg
