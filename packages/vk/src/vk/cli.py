@@ -6,14 +6,15 @@ import os
 import sys
 from collections.abc import Sequence
 
+from vk import pipeline
 from vk.approval import Caller
 from vk.config import ConfigError, load_config
 from vk.llm import BudgetExceeded
 from vk.orchestrator import run_vk
 
 MAX_CI_FIX_ATTEMPTS = 2
-MAX_REVIEW_CYCLES = 2
-STATUS_LABELS = ("vk:in-progress", "vk:pr-open", "vk:needs-info", "vk:blocked")
+MAX_REVIEW_CYCLES = pipeline.MAX_REVIEW_CYCLES
+STATUS_LABELS = pipeline.STATUS_LABELS
 
 _NO_APPROVALS = (
     "this run is unattended: nobody is watching to answer a question or approve an action, "

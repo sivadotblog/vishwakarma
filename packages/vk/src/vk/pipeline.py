@@ -1,0 +1,447 @@
+"""Code-driven issue pipeline: Python owns the control flow, agents only make judgments."""
+
+import getpass
+import json
+import logging
+import re
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic import BaseModel
+from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.models import Model
+
+from vk import agents, runlog
+from vk.approval import PREFIX, READS, Caller, Confirm
+from vk.clans import PROMPTS_DIR, run_clan
+from vk.config import Config
+from vk.github import GitHub, GitHubError, github_tools
+from vk.models import (
+    Analysis,
+    Classification,
+    Implementation,
+    PrBody,
+    Research,
+    Review,
+    Triage,
+)
+from vk.tooling import Tool, ToolError
+from vk.tools import load_skill, preference_tools
+
+log = logging.getLogger(__name__)
+
+MAX_REVIEW_CYCLES = 2
+STATUS_LABELS = ("vk:in-progress", "vk:pr-open", "vk:needs-info", "vk:blocked")
+IN_PROGRESS, PR_OPEN, NEEDS_INFO, BLOCKED = STATUS_LABELS
+
+ModelFactory = Callable[[str], Model]
+
+
+class StageFailed(Exception):
+    """A stage raised twice; the run ends blocked."""
+
+    def __init__(self, stage: str, cause: Exception) -> None:
+        super().__init__(f"{stage} failed: {cause}")
+        self.stage = stage
+
+
+def _attempt[T](stage: str, call: Callable[[], T]) -> T:
+    """Run `call`, retrying once on any failure except a spent token budget."""
+    try:
+        return call()
+    except UsageLimitExceeded:
+        raise
+    except Exception as first:
+        log.warning("stage %s failed, retrying once: %s", stage, first)
+    try:
+        return call()
+    except UsageLimitExceeded:
+        raise
+    except Exception as exc:
+        log.error("stage %s failed again: %s", stage, exc)
+        raise StageFailed(stage, exc) from exc
+
+
+@dataclass(frozen=True)
+class Stages:
+    """Runs clans and judgment agents with the shared retry rule and test seams."""
+
+    cfg: Config
+    model: ModelFactory | None = None
+    remote_url: str | None = None
+
+    def clan[T: BaseModel](self, name: str, message: str, out: type[T]) -> T:
+        result = _attempt(
+            name,
+            lambda: run_clan(name, message, self.cfg, model=self.model, remote_url=self.remote_url),
+        )
+        if not isinstance(result, out):
+            raise TypeError(f"clan {name} returned {type(result).__name__}, not {out.__name__}")
+        return result
+
+    def agent[T: BaseModel](
+        self, name: str, out: type[T], instructions: str, message: str, tools: list[Tool]
+    ) -> T:
+        return _attempt(
+            name,
+            lambda: agents.run_typed(
+                name,
+                out,
+                instructions,
+                message,
+                tools,
+                self.cfg,
+                model=self.model(name) if self.model else None,
+            ),
+        )
+
+
+class IssueOps:
+    """The issue's GitHub reads and writes, all through the guarded `github__*` tools."""
+
+    def __init__(self, gh: GitHub, caller: Caller, confirm: Confirm | None, number: int) -> None:
+        self.number = number
+        self._tools = {t.name: t for t in github_tools(gh, caller, confirm)}
+        self.status: str | None = None
+
+    def call(self, tool: str, /, **args: Any) -> Any:
+        return self._tools[PREFIX + tool].fn(args)
+
+    def read_tools(self) -> list[Tool]:
+        return [t for t in self._tools.values() if t.name.removeprefix(PREFIX) in READS]
+
+    def comment(self, body: str) -> None:
+        self.call("addIssueComment", issue_number=self.number, body=body)
+
+    def remove_label(self, name: str) -> None:
+        try:
+            self.call("removeLabel", issue_number=self.number, name=name)
+        except GitHubError as exc:
+            if exc.status != 404:  # already gone: someone removed it by hand
+                raise
+
+    def set_status(self, label: str) -> None:
+        if self.status:
+            self.remove_label(self.status)
+        self.call("addLabels", issue_number=self.number, labels=[label])
+        self.status = label
+
+    def issue_exists(self, number: int) -> bool:
+        try:
+            self.call("getIssueContext", issue_number=number)
+        except GitHubError as exc:
+            if exc.status != 404:
+                raise
+            return False
+        return True
+
+
+def _dump(model: BaseModel) -> str:
+    return json.dumps(model.model_dump(mode="json", by_alias=True), indent=2)
+
+
+def _issue_text(number: int, ctx: dict[str, Any]) -> str:
+    """The issue verbatim: title, body, and every comment."""
+    issue = ctx["issue"]
+    author = (issue.get("user") or {}).get("login", "unknown")
+    parts = [f"# Issue #{number}: {issue.get('title', '')}", f"Opened by @{author}.", ""]
+    parts.append(issue.get("body") or "(no description)")
+    comments = ctx.get("comments") or []
+    if comments:
+        parts += ["", "## Comments"]
+        for c in comments:
+            parts += ["", f"@{(c.get('user') or {}).get('login', 'unknown')}:", c.get("body", "")]
+    return "\n".join(parts)
+
+
+def _artifact_line(kind: str, artifact_id: str | None) -> str:
+    if not artifact_id:
+        return ""
+    return f"\n\n{kind} artifact id: {artifact_id} (open it with read_artifact before you start)."
+
+
+def _section(title: str, body: str) -> str:
+    return f"## {title}\n\n{body}"
+
+
+def _instructions(cfg: Config, name: str, *extra: str) -> str:
+    """Agent prompt, then any extra text, then the shared writing style."""
+    parts = [(PROMPTS_DIR / f"{name}.md").read_text(encoding="utf-8").replace("{repo}", cfg.repo)]
+    parts += extra
+    parts.append((PROMPTS_DIR / "style.md").read_text(encoding="utf-8"))
+    return "\n\n".join(p.strip() for p in parts) + "\n"
+
+
+def _findings(review: Review) -> str:
+    lines = [f"- {f}" for f in review.blocking_findings]
+    lines += [
+        f"- Failed criterion: {c.criterion} ({c.evidence})"
+        for c in review.criteria_results
+        if not c.passed
+    ]
+    lines += [f"- Advisory: {s}" for s in review.suggestions]
+    return "\n".join(lines) or "- (the reviewer gave no itemized findings; see its summary)"
+
+
+@dataclass(frozen=True)
+class LoopResult:
+    implementation: Implementation
+    review: Review
+    approved: bool
+    revisions: int
+
+
+def implement_and_review(
+    stages: Stages,
+    task: str,
+    brief: str,
+    *,
+    progress: Callable[[str], None] | None = None,
+) -> LoopResult:
+    """Implementer then reviewer, with up to MAX_REVIEW_CYCLES revisions on `request_changes`.
+
+    `task` is the implementer's self-contained first message and `brief` the context the
+    reviewer needs (work item, criteria, artifact ids); the implementation report is appended
+    for it. A `reject` verdict stops at once: iteration will not fix a wrong approach.
+    """
+    impl = stages.clan("implementer", task, Implementation)
+    revisions = 0
+    while True:
+        review_message = "\n\n".join(
+            [
+                brief,
+                _section("Implementer report", _dump(impl)),
+                f"Review the branch `{impl.branch}` (base `{impl.base}`).",
+            ]
+        )
+        review = stages.clan("reviewer", review_message, Review)
+        if review.verdict != "request_changes" or revisions == MAX_REVIEW_CYCLES:
+            return LoopResult(impl, review, review.verdict == "approve", revisions)
+        revisions += 1
+        if progress:
+            progress(
+                f"The reviewer asked for changes ({revisions} of {MAX_REVIEW_CYCLES}). Revising."
+            )
+        revision = "\n\n".join(
+            [
+                task,
+                _section(
+                    "Revision requested",
+                    f"The work is already on branch `{impl.branch}`. Fetch it with "
+                    "checkout_branch, address every finding below (fix it, or record in "
+                    "`deviations` why it should stand), and push to the same branch.",
+                ),
+                _section("Your previous implementation report", _dump(impl)),
+                _section("Reviewer findings", _findings(review)),
+            ]
+        )
+        impl = stages.clan("implementer", revision, Implementation)
+
+
+def _preferences(cfg: Config, caller: Caller) -> str:
+    """The signed-in user's saved preferences; unattended runs have none."""
+    if caller.unattended:
+        return ""
+    get = next(
+        t for t in preference_tools(cfg, getpass.getuser()) if t.name == "get_user_preferences"
+    )
+    found = get.fn({})
+    prefs = str(found.get("preferences", "")).strip()
+    return (
+        f"# This user's standing preferences\n\nApply these to the pull request:\n\n{prefs}"
+        if prefs
+        else ""
+    )
+
+
+def _with_closes(body: str, number: int) -> str:
+    if re.search(rf"\bcloses\s+#{number}\b", body, re.IGNORECASE):
+        return body
+    return f"{body.rstrip()}\n\nCloses #{number}\n"
+
+
+def run_issue(
+    cfg: Config,
+    gh: GitHub,
+    number: int,
+    caller: Caller,
+    *,
+    confirm: Confirm | None = None,
+    model: ModelFactory | None = None,
+    remote_url: str | None = None,
+) -> str:
+    """Take issue `number` from triage to a draft pull request; returns the closing summary.
+
+    `model` (agent name -> PydanticAI model) and `remote_url` are test seams.
+    """
+    ops = IssueOps(gh, caller, confirm, number)
+    stages = Stages(cfg, model, remote_url)
+    started = time.monotonic()
+
+    ctx = ops.call("getIssueContext", issue_number=number)
+    on_issue = {label["name"] for label in ctx.get("labels", [])}
+    for label in STATUS_LABELS:
+        ops.call("ensureLabel", name=label)
+    for stale in on_issue & set(STATUS_LABELS):  # left by an earlier run
+        ops.remove_label(stale)
+    ops.set_status(IN_PROGRESS)
+    issue = _issue_text(number, ctx)
+    log.info("issue #%d starting repo=%s", number, cfg.repo)
+
+    try:
+        summary = _run(cfg, ops, stages, caller, number, issue, on_issue)
+    except StageFailed as exc:
+        ops.comment(
+            f"I hit an error in the {exc.stage} step and stopped, so no pull request was "
+            f"opened.\n\nError: {exc.__cause__}\n\nLabel the issue `vk` again to retry."
+        )
+        ops.set_status(BLOCKED)
+        summary = f"Stopped: the {exc.stage} step failed twice ({exc.__cause__})."
+    log.info("issue #%d finished in %.1fs", number, time.monotonic() - started)
+    return summary
+
+
+def _run(
+    cfg: Config,
+    ops: IssueOps,
+    stages: Stages,
+    caller: Caller,
+    number: int,
+    issue: str,
+    on_issue: set[str],
+) -> str:
+    # 1. Triage: duplicates, labels, whether research is needed.
+    repo_labels = [label["name"] for label in ops.call("listLabels", per_page=100)]
+    triage = stages.agent(
+        "triage",
+        Triage,
+        _instructions(cfg, "triage", load_skill("triaging-issues")),
+        f"{issue}\n\n## Existing labels\n\n" + ("\n".join(repo_labels) or "(none)"),
+        ops.read_tools(),
+    )
+    log.info("triage proceed=%s duplicate_of=%s", triage.proceed, triage.duplicate_of)
+    # Code decides which labels apply: only ones the repo already has, never a status label.
+    wanted = [
+        label
+        for label in dict.fromkeys(triage.labels)
+        if label in repo_labels and label not in STATUS_LABELS and label not in on_issue
+    ]
+    if wanted:
+        ops.call("addLabels", issue_number=number, labels=wanted)
+
+    dup = triage.duplicate_of
+    if dup is not None and dup != number and ops.issue_exists(dup):
+        ops.comment(
+            f"This looks like a duplicate of #{dup}. {triage.reason}\n\n"
+            "I'm not running the factory on it. If that's wrong, say so here and label the "
+            "issue `vk` again."
+        )
+        ops.set_status(NEEDS_INFO)
+        return f"Issue #{number} looks like a duplicate of #{dup}; I commented and stopped."
+    if not triage.proceed:
+        ops.comment(f"I'm not going to work on this one. {triage.reason}")
+        ops.set_status(BLOCKED)
+        return f"Triage decided not to proceed on #{number}: {triage.reason}"
+
+    # 2. Classify; stop for clarification.
+    classification = stages.clan("classifier", issue, Classification)
+    if classification.needs_clarification:
+        questions = "\n".join(f"- {q}" for q in classification.questions)
+        ops.comment(
+            "Thanks for the report. Before I start, I need a few answers:\n\n"
+            f"{questions}\n\nReply here, then label the issue `vk` again and I'll pick it up."
+        )
+        ops.set_status(NEEDS_INFO)
+        return f"Issue #{number} needs clarification; I posted my questions."
+    c = classification
+    ops.comment(
+        f"Classified as {c.type} ({c.priority} priority, {c.complexity}) in {c.affected_area}. "
+        + ("Researching first, then planning." if triage.needs_research else "Planning next.")
+    )
+    context = [issue, _section("Classification", _dump(classification))]
+
+    # 3. Research (only when triage asks), then analysis.
+    research: Research | None = None
+    if triage.needs_research:
+        question = triage.research_question or "Verify the facts this issue depends on."
+        research = stages.clan(
+            "researcher", "\n\n".join([*context, _section("Research question", question)]), Research
+        )
+        context.append(_section("Research", _dump(research)))
+    analysis_message = "\n\n".join(context)
+    if research:
+        analysis_message += _artifact_line("Research", research.artifact_id)
+    analysis = stages.clan("analyst", analysis_message, Analysis)
+    ops.comment(
+        f"The plan is ready: {len(analysis.plan)} step(s), {len(analysis.acceptance_criteria)} "
+        "acceptance criteria. Implementing now."
+    )
+
+    # 4. Implement and review.
+    plan = [*context, _section("Analysis", _dump(analysis))]
+    artifact = _artifact_line("Analysis", analysis.artifact_id)
+    task = "\n\n".join(["Implement this work item.", *plan]) + artifact
+    brief = "\n\n".join(["Review this work item.", *plan]) + artifact
+    result = implement_and_review(stages, task, brief, progress=ops.comment)
+    impl, review = result.implementation, result.review
+    if not result.approved:
+        ops.comment(
+            f"The reviewer still has unresolved findings after {result.revisions} "
+            f"revision(s) (verdict: {review.verdict}), so I did not open a pull request. "
+            f"The work is on branch `{impl.branch}`.\n\n{review.summary}\n\n"
+            f"Unresolved findings:\n\n{_findings(review)}"
+        )
+        ops.set_status(BLOCKED)
+        return (
+            f"Review did not pass for #{number} ({review.verdict}); "
+            "findings posted, no pull request."
+        )
+
+    # 5. Publish the run log before the PR, then write and open the draft PR.
+    try:
+        runlog.publish(
+            cfg,
+            {
+                "issue_number": number,
+                "branch": impl.branch,
+                "mode": "write",
+                "classification": classification.model_dump(mode="json", by_alias=True),
+                "analysis": analysis.model_dump(mode="json", by_alias=True),
+                "implementation": impl.model_dump(mode="json", by_alias=True),
+                "review": review.model_dump(mode="json", by_alias=True),
+            },
+            remote_url=stages.remote_url,
+        )
+    except ToolError as exc:
+        raise StageFailed("run log", exc) from exc
+    pr_message = "\n\n".join(
+        [
+            *plan,
+            _section("Implementer report", _dump(impl)),
+            _section("Reviewer verdict", _dump(review)),
+            f"The run log is `{runlog.log_path(number)}` on branch `{impl.branch}`.",
+        ]
+    )
+    pr = stages.agent(
+        "pr_writer",
+        PrBody,
+        _instructions(cfg, "pr_writer", load_skill("writing-quality"), _preferences(cfg, caller)),
+        pr_message,
+        [],
+    )
+    created = ops.call(
+        "createPullRequest",
+        title=pr.title,
+        head=impl.branch,
+        base=impl.base,
+        body=_with_closes(pr.body, number),
+        draft=True,
+    )
+    ops.set_status(PR_OPEN)
+    url = created.get("html_url") or f"(pull request #{created.get('number', '?')})"
+    return (
+        f"Opened draft pull request {url} for #{number}. Reviewer verdict: approve after "
+        f"{result.revisions} revision(s). {review.summary}"
+    )

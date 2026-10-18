@@ -156,6 +156,13 @@ class Triage(_Model):
     )
     labels: list[str] = Field(description="Labels to apply to the issue.")
     reason: str = Field(description="Why this decision was made, in one or two sentences.")
+    needs_research: bool = Field(
+        description="True when the work turns on a fact the repository and its issues do not hold."
+    )
+    research_question: str = Field(
+        default="",
+        description="The specific question for the researcher; empty unless needs_research is true.",
+    )
 
 
 class CommentDecision(_Model):

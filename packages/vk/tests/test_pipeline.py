@@ -1,17 +1,9 @@
 """End-to-end: scripted LLM + fake GitHub + local bare git remote."""
 
 import json
-import subprocess
-from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-
-import pytest
-import requests
-from pydantic_ai import ModelMessage, ModelResponse, ToolCallPart
-from pydantic_ai.models import Model
-from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from vk.approval import Caller
 from vk.cli import issue_task, review_task
@@ -19,50 +11,17 @@ from vk.config import Config
 from vk.github import GitHub
 from vk.orchestrator import run_vk
 
-BRANCH = "vk/bug-dedupe"
-CLS = {
-    "type": "bug",
-    "priority": "high",
-    "complexity": "small",
-    "affected_area": "api",
-    "actionable": True,
-    "needs_clarification": False,
-    "questions": [],
-    "summary": "Reset emails are sent twice.",
-}
-ANALYSIS = {
-    "problem_statement": "Duplicate sends.",
-    "approach": "Dedupe.",
-    "plan": ["Guard"],
-    "affected_surface": ["a.py"],
-    "risks": [],
-    "acceptance_criteria": ["Only one email"],
-    "test_strategy": "pytest",
-    "assumptions": [],
-    "open_questions": [],
-    "artifact_id": None,
-}
-IMPL = {
-    "branch": BRANCH,
-    "base": "main",
-    "pushed": True,
-    "change_summary": [{"path": "fix.txt", "change": "fix"}],
-    "verification": [{"command": "true", "result": "ok"}],
-    "deviations": [],
-    "known_limitations": [],
-}
-REVIEW = {
-    "verdict": "approve",
-    "criteria_results": [{"criterion": "Only one email", "pass": True, "evidence": "diff"}],
-    "blocking_findings": [],
-    "suggestions": [],
-    "summary": "Fine.",
-}
-
-
-def sh(*args: str, cwd: Path | None = None) -> str:
-    out = subprocess.run(args, cwd=cwd, capture_output=True, text=True, check=True)
-    return out.stdout.strip()
+from .helpers import (
+    ANALYSIS,
+    BRANCH,
+    CLS,
+    IMPL,
+    REVIEW,
+    FakeSession,
+    clan_models,
+    implementer_turns,
+    sh,
+)
 
 
 class Script:
@@ -89,85 +48,8 @@ class Script:
         return SimpleNamespace(choices=[SimpleNamespace(message=msg)], usage=usage)
 
 
-def clan_models(**roles: list[Any]) -> Callable[[str], Model]:
-    """Scripted clan models: one queue of turns per clan; `submit` calls the output tool."""
-
-    def factory(name: str) -> Model:
-        turns = roles[name]
-
-        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            calls = turns.pop(0)
-            parts = [
-                ToolCallPart(info.output_tools[0].name if tool == "submit" else tool, args)
-                for tool, args in calls
-            ]
-            return ModelResponse(parts=parts)
-
-        return FunctionModel(fn)
-
-    return factory
-
-
-class Resp:
-    def __init__(self, status: int, data: Any) -> None:
-        self.status_code, self._data = status, data
-        self.text, self.content = json.dumps(data), b"x"
-
-    def json(self) -> Any:
-        return self._data
-
-
-class FakeSession(requests.Session):
-    def __init__(self, routes: dict[tuple[str, str], Any]) -> None:
-        super().__init__()
-        self.routes = routes
-        self.calls: list[tuple[str, str, Any]] = []
-
-    def request(self, method: str, url: str, **kw: Any) -> Any:  # type: ignore[override]
-        path = url.removeprefix("https://api.github.com")
-        self.calls.append((method, path, kw.get("json")))
-        if (method, path) in self.routes:
-            return Resp(200, self.routes[(method, path)])
-        return Resp(201, {"id": 1}) if method == "POST" else Resp(404, {"message": "Not Found"})
-
-    def posts(self, suffix: str) -> list[Any]:
-        return [body for m, p, body in self.calls if m == "POST" and p.endswith(suffix)]
-
-
-@pytest.fixture
-def remote(tmp_path: Path) -> Path:
-    bare = tmp_path / "remote.git"
-    sh("git", "init", "--bare", "-b", "main", str(bare))
-    seed = tmp_path / "seed"
-    sh("git", "clone", str(bare), str(seed))
-    (seed / "README.md").write_text("hi\n")
-    sh("git", "add", ".", cwd=seed)
-    sh("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "init", cwd=seed)
-    sh("git", "push", "origin", "HEAD:main", cwd=seed)
-    return bare
-
-
-@pytest.fixture
-def cfg(tmp_path: Path) -> Config:
-    return Config(
-        repo="o/r", github_token="tok", model="m", clan_models={}, state_dir=tmp_path / "state"
-    )
-
-
 def run_clan_call(name: str, message: str = "go") -> tuple[str, dict[str, Any]]:
     return (f"run_{name}", {"message": message})
-
-
-def implementer_turns(*first: tuple[str, dict[str, Any]], prefix: str = "") -> list[Any]:
-    commit = (
-        prefix
-        + "echo fixed >> fix.txt && git add -A && git commit -qm fix; git branch --show-current"
-    )
-    return [
-        [*first, ("bash", {"command": commit})],
-        [("push_branch", {"branch": BRANCH})],
-        [("submit", IMPL)],
-    ]
 
 
 def test_issue_pipeline(cfg: Config, remote: Path) -> None:
