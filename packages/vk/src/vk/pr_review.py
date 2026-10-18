@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from vk import runlog
 from vk.approval import Caller, Confirm
+from vk.clans import load_prompt
 from vk.config import Config
 from vk.github import GitHub, GitHubError
 from vk.models import CommentDecision, Implementation
@@ -21,6 +22,7 @@ from vk.pipeline import (
     implement_and_review,
     load_notebook,
     review_findings,
+    revision_section,
     section,
 )
 from vk.tooling import ToolError
@@ -340,19 +342,12 @@ def _handle(
                 f"Revise pull request #{ops.number}: address each review comment below.",
                 *context,
                 wanted,
-                section(
-                    "Revision requested",
-                    f"The work is already on branch `{head}`. Fetch it with checkout_branch, "
-                    "fix every comment above (or record in `deviations` why one should stand), "
-                    "and push to the same branch.",
-                ),
+                revision_section(head),
             ]
         )
         brief = "\n\n".join(
             [
-                f"Review the changes made for pull request #{ops.number} in response to "
-                "review comments. Treat each comment below as a criterion: judge whether it "
-                "is addressed correctly and nothing else broke.",
+                load_prompt("review_brief", number=str(ops.number)),
                 *context,
                 wanted,
             ]

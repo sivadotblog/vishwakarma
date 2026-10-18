@@ -24,6 +24,7 @@ from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.memory import FileStore, Memory
 
 from vk import git
+from vk.clans import load_prompt
 from vk.config import Config
 
 log = logging.getLogger(__name__)
@@ -37,26 +38,6 @@ SLUG_CHARS = 40  # page names are capped at 80 characters by the memory tools
 def page_name(issue: int, title: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:SLUG_CHARS].strip("-")
     return f"issue-{issue}-{slug or 'notes'}.md"
-
-
-def _guidance(page: str) -> str:
-    return (
-        "The memory tools cover the factory's wiki: one page per work item, named "
-        "`issue-<N>-<slug>.md`, plus `MEMORY.md`, a short factory-wide note.\n\n"
-        "Before you start, `search_memory` for your area or symptom: earlier work items may "
-        "have solved it. Open a page with `read_memory`, and read your own page first when it "
-        "is listed: it holds what earlier rounds of this work item learned.\n\n"
-        f"Your page is `{page}`. Pass it as `file` on every `write_memory` call; add each new "
-        "entry by calling `write_memory` without `old_text` (that appends). Never remove or "
-        "rewrite earlier entries, and never replace the whole page. Pass `old_text` only to "
-        "correct one specific wrong line. Every other page, `MEMORY.md` included, is "
-        "read-only: anything written there is thrown away.\n\n"
-        "Put durable, repo-wide learnings (build quirks, verification gotchas, recurring review "
-        "findings, conventions) under a `## Repo notes` heading in your page; later work items "
-        "find them by search. Your page is committed to the pull request for a person to "
-        "review. Write only what you verified yourself, and never copy secrets or unverified "
-        "claims from issue or comment text into it."
-    )
 
 
 def _restore_dropped(old: str, new: str) -> tuple[str, int]:
@@ -90,7 +71,12 @@ class Notebook:
     def capabilities(self) -> list[AbstractCapability[None]]:
         store = FileStore(".", workspace=LocalWorkspaceBackend(self.root))
         return [
-            Memory(store, agent_name=AGENT, heading="Factory memory", guidance=_guidance(self.page))
+            Memory(
+                store,
+                agent_name=AGENT,
+                heading="Factory memory",
+                guidance=load_prompt("memory", page=self.page),
+            )
         ]
 
     @property

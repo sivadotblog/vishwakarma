@@ -24,6 +24,15 @@ PROMPTS_DIR = Path(__file__).parent / "prompts"
 REPO_INSTRUCTION_FILES = ("AGENTS.md", "CLAUDE.md")
 MAX_REPO_INSTRUCTIONS = 20_000  # characters per file
 
+
+def load_prompt(name: str, **values: str) -> str:
+    """A prompt file with each `{key}` replaced by its value. Code only fills placeholders."""
+    text = (PROMPTS_DIR / f"{name}.md").read_text(encoding="utf-8")
+    for key, value in values.items():
+        text = text.replace("{" + key + "}", value)
+    return text
+
+
 ToolBuilder = Callable[[Config, Path, str | None], list[Tool]]
 
 
@@ -64,9 +73,7 @@ class Clan:
     tools: ToolBuilder
 
     def prompt(self, cfg: Config, repo_dir: Path | None) -> str:
-        text = (PROMPTS_DIR / f"{self.name}.md").read_text(encoding="utf-8")
-        text = text.replace("{repo}", cfg.repo)
-        text = text.replace("{repo_dir}", str(repo_dir) if repo_dir else "")
+        text = load_prompt(self.name, repo=cfg.repo, repo_dir=str(repo_dir) if repo_dir else "")
         return text + repo_instructions(repo_dir) if repo_dir else text
 
 
@@ -83,12 +90,7 @@ def repo_instructions(repo_dir: Path) -> str:
         sections.append(f"### {name}\n\n{body.strip()}")
     if not sections:
         return ""
-    header = (
-        "\n\n## Repository instructions\n\n"
-        "The target repository ships these instructions for agents working in it. Follow them:"
-        " they decide the package manager, the check commands, and the hard rules, and they"
-        " override your own habits.\n\n"
-    )
+    header = "\n\n" + load_prompt("repo_instructions").strip() + "\n\n"
     return header + "\n\n".join(sections) + "\n"
 
 

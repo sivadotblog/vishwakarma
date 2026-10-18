@@ -23,6 +23,7 @@ from vk.pipeline import (
     implement_and_review,
     load_notebook,
     review_findings,
+    revision_section,
     section,
 )
 
@@ -130,12 +131,7 @@ def _attempt(
             f"Fix the failing CI on pull request #{ops.number}.",
             *context,
             findings,
-            section(
-                "Revision requested",
-                f"The work is already on branch `{head}`. Fetch it with checkout_branch, make "
-                "the checks pass, run the repository's own checks to confirm, and push to the "
-                "same branch. Do not open a new pull request.",
-            ),
+            revision_section(head),
         ]
     )
     brief = "\n\n".join(

@@ -15,7 +15,7 @@ from pydantic_ai.models import Model
 
 from vk import agents, git, memory, runlog
 from vk.approval import PREFIX, READS, Caller, Confirm
-from vk.clans import PROMPTS_DIR, run_clan
+from vk.clans import load_prompt, run_clan
 from vk.config import Config
 from vk.github import GitHub, GitHubError, github_tools
 from vk.memory import Notebook
@@ -289,10 +289,12 @@ def section(title: str, body: str) -> str:
 
 def agent_instructions(cfg: Config, name: str, *extra: str) -> str:
     """Agent prompt, then any extra text, then the shared writing style."""
-    parts = [(PROMPTS_DIR / f"{name}.md").read_text(encoding="utf-8").replace("{repo}", cfg.repo)]
-    parts += extra
-    parts.append((PROMPTS_DIR / "style.md").read_text(encoding="utf-8"))
+    parts = [load_prompt(name, repo=cfg.repo), *extra, load_prompt("style")]
     return "\n\n".join(p.strip() for p in parts) + "\n"
+
+
+def revision_section(branch: str) -> str:
+    return section("Revision requested", load_prompt("revision", branch=branch))
 
 
 def review_findings(review: Review) -> str:
@@ -376,12 +378,7 @@ def implement_and_review(
         revision = "\n\n".join(
             [
                 task,
-                section(
-                    "Revision requested",
-                    f"The work is already on branch `{impl.branch}`. Fetch it with "
-                    "checkout_branch, address every finding below (fix it, or record in "
-                    "`deviations` why it should stand), and push to the same branch.",
-                ),
+                revision_section(impl.branch),
                 section("Your previous implementation report", dump(impl)),
                 section("Reviewer findings", review_findings(review)),
             ]
@@ -408,11 +405,7 @@ def _preferences(cfg: Config, caller: Caller) -> str:
     )
     found = get.fn({})
     prefs = str(found.get("preferences", "")).strip()
-    return (
-        f"# This user's standing preferences\n\nApply these to the pull request:\n\n{prefs}"
-        if prefs
-        else ""
-    )
+    return load_prompt("preferences", preferences=prefs) if prefs else ""
 
 
 def _with_closes(body: str, number: int) -> str:
