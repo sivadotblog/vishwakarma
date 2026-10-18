@@ -1,9 +1,10 @@
 """Prefect flows that run VK on demand: `vk-issue` for an issue, `vk-review` for a PR.
 
-Each run bootstraps a toolchain, mints a GitHub App installation token, and runs the `vk` CLI
-as a subprocess. This module runs in the Prefect image's Python, so it imports only the
-stdlib, Prefect, httpx and cryptography (via `github_app`), never `vk`. Secrets reach VK only
-through the subprocess environment and are never logged.
+The pull steps in `prefect.yaml` install the toolchain and sync the workspace; each run then
+mints a GitHub App installation token and runs the `vk` CLI as a subprocess. This module runs
+in the Prefect image's Python, so it imports only the stdlib, Prefect, httpx and cryptography
+(via `github_app`), never `vk`. Secrets reach VK only through the subprocess environment and
+are never logged.
 """
 
 import logging
@@ -28,7 +29,6 @@ from .github_app import API, AppToken, installation_token
 REPO = "sivadotblog/vishwakarma"
 DEFAULT_MODEL = "google:gemini-3.5-flash"
 REPO_ROOT = Path(__file__).resolve().parents[3]
-BOOTSTRAP = Path(__file__).resolve().parent / "bootstrap.sh"
 
 Kind = Literal["issue", "review"]
 Log = logging.Logger | logging.LoggerAdapter[logging.Logger]
@@ -57,19 +57,6 @@ def load_settings() -> Settings:
         gemini_api_key=secret("vk-gemini-api-key"),
         model=str(Variable.get("vk_model", default=DEFAULT_MODEL)),
     )
-
-
-def bootstrap(logger: Log) -> None:
-    """Install uv, make and Node, then sync the workspace. Logs the output, raises on failure."""
-    result = subprocess.run(
-        ["bash", str(BOOTSTRAP)],
-        cwd=REPO_ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    logger.info("bootstrap output:\n%s%s", result.stdout, result.stderr)
-    result.check_returncode()
 
 
 def vk_command(kind: Kind, number: int) -> list[str]:
@@ -124,7 +111,6 @@ def run_vk(kind: Kind, number: int, logger: Log, run_url: str | None) -> str:
     Failures before a token exists propagate unchanged. A nonzero VK exit posts a failure
     comment (best effort) and then raises.
     """
-    bootstrap(logger)
     settings = load_settings()
     token = installation_token(settings.app_id, settings.private_key, REPO)
     state_dir = Path(tempfile.mkdtemp(prefix="vk-state-"))

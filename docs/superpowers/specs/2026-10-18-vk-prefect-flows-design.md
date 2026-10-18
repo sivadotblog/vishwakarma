@@ -205,3 +205,18 @@ Order *(spec author's call)*:
   to handle the case where the container is not root.
 - How `prefect_flows` becomes importable for pytest and mypy.
 - How the two flows share code internally.
+
+## Amendment (2026-10-18, owner direction)
+
+- Deployment moved from `deploy.py` to Prefect's CI/CD pattern. `packages/vk/prefect_flows/prefect.yaml`
+  defines both deployments, and `.github/workflows/prefect-deploy.yml` runs the marketplace
+  action `PrefectHQ/actions-prefect-deploy@v4`. Pushes to `main` deploy `<flow>/main`, and a
+  manual dispatch on a branch deploys `<flow>/<branch-slug>`. The branch reaches the run through
+  `VK_BRANCH`, which is baked into the job env and resolved by the `git_clone` pull step at run
+  time. `deploy.py` and its tests are removed.
+- `bootstrap.sh` is removed. The toolchain install (make, Node 22, uv) and `uv sync --locked`
+  are now a `run_shell_script` pull step in `prefect.yaml`. This still uses no pip: the owner
+  suggested a pip install step, but the repo's hard rules forbid pip, and pip could not install
+  make or Node in any case.
+- New repo secret: `PREFECT_API_KEY`. The workspace API URL is set in the workflow; it is not a
+  secret.

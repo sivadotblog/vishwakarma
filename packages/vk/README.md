@@ -97,13 +97,17 @@ Create these in your Prefect workspace first:
 - Variable `vk_app_id`: the GitHub App ID.
 - Variable `vk_model`: the model, defaults to `google:gemini-3.5-flash`.
 
-Deploy with `PREFECT_API_URL` and `PREFECT_API_KEY` set:
+Deployments are defined in `packages/vk/prefect_flows/prefect.yaml` and registered by
+`.github/workflows/prefect-deploy.yml` with `PrefectHQ/actions-prefect-deploy`, which needs the
+repo secret `PREFECT_API_KEY`. A push to `main` that touches the flows deploys `vk-issue/main`
+and `vk-review/main`. To test a branch, run the workflow by hand on it
+(`gh workflow run prefect-deploy.yml --ref <branch>`); its deployments are named after the
+branch, with `/` and capitals slugified. GitHub only offers that once the workflow is on `main`;
+until then, deploy from your machine with the same file:
+`VK_BRANCH=<branch> VK_DEPLOYMENT=<slug> uv run prefect --no-prompt deploy --all --prefect-file packages/vk/prefect_flows/prefect.yaml`.
+Before each run, the pull steps in `prefect.yaml` clone
+that branch, install make, Node 22 and uv, and run `uv sync --locked`.
 
-```bash
-uv run --package vk python packages/vk/prefect_flows/deploy.py [--branch <b>]
-```
-
-Each deployment is named after its branch (`main` by default, with `/` and capitals slugified).
 Run one:
 
 ```bash

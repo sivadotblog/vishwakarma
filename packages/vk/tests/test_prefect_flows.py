@@ -29,7 +29,6 @@ class Comments:
 @pytest.fixture
 def comments(monkeypatch: pytest.MonkeyPatch) -> Comments:
     recorder = Comments()
-    monkeypatch.setattr(flows, "bootstrap", lambda logger: None)
     monkeypatch.setattr(flows, "load_settings", lambda: SETTINGS)
     monkeypatch.setattr(flows, "installation_token", lambda *args, **kwargs: TOKEN)
     monkeypatch.setattr(flows, "post_comment", recorder)
@@ -85,16 +84,16 @@ def test_run_vk_failure_comments_and_raises(
     assert comments.calls == [("ghs_secret", 5, "The software factory run failed. Log: u")]
 
 
-def test_run_vk_bootstrap_failure_skips_comment(
+def test_run_vk_settings_failure_skips_comment(
     monkeypatch: pytest.MonkeyPatch, comments: Comments
 ) -> None:
-    error = subprocess.CalledProcessError(1, "bootstrap.sh")
+    error = RuntimeError("Prefect variable vk_app_id is not set")
 
-    def fail(logger: object) -> None:
+    def fail() -> flows.Settings:
         raise error
 
-    monkeypatch.setattr(flows, "bootstrap", fail)
-    with pytest.raises(subprocess.CalledProcessError) as raised:
+    monkeypatch.setattr(flows, "load_settings", fail)
+    with pytest.raises(RuntimeError) as raised:
         run_vk("issue", 5, LOGGER, "u")
     assert raised.value is error
     assert comments.calls == []
