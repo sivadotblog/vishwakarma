@@ -1,0 +1,1 @@
+The work is already on branch `{branch}`. Fetch it with `checkout_branch` and address every finding, comment, or failure listed in this message: fix it, or record in `deviations` why it should stand. Run the repository's own checks to confirm, then push to the same branch. Do not open a new pull request.

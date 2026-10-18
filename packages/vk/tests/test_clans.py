@@ -1,13 +1,16 @@
+import ast
 from pathlib import Path
 
 from pydantic_ai import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from vk.clans import CLANS, MAX_REPO_INSTRUCTIONS, run_clan
+from vk import clans
+from vk.clans import CLANS, MAX_REPO_INSTRUCTIONS, load_prompt, run_clan
 from vk.config import Config
 from vk.models import Classification
 
+MAX_LITERAL = 300  # characters
 CFG = Config(repo="o/r", github_token="t", model="m", clan_models={}, state_dir=Path("/x"))
 
 
@@ -50,9 +53,6 @@ def test_run_clan_returns_the_clan_output_model() -> None:
         "priority": "high",
         "complexity": "small",
         "affected_area": "api",
-        "actionable": True,
-        "needs_clarification": False,
-        "questions": [],
         "summary": "Reset emails are sent twice.",
     }
     seen: list[str] = []
@@ -69,3 +69,32 @@ def test_run_clan_returns_the_clan_output_model() -> None:
 
     assert result == Classification.model_validate(payload)
     assert seen == ["classifier"]
+
+
+def test_no_module_carries_long_model_text() -> None:
+    """Wording a model reads lives in `prompts/*.md`; code only fills placeholders."""
+    long = []
+    for source in sorted(Path(clans.__file__).parent.glob("*.py")):
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        docstrings = {
+            id(node.body[0].value)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef)
+            and node.body
+            and isinstance(node.body[0], ast.Expr)
+            and isinstance(node.body[0].value, ast.Constant)
+        }
+        long += [
+            f"{source.name}:{node.lineno} ({len(node.value)} chars)"
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and id(node) not in docstrings
+            and len(node.value) > MAX_LITERAL
+        ]
+    assert not long, f"move this text into src/vk/prompts/*.md: {long}"
+
+
+def test_load_prompt_fills_only_the_named_placeholders() -> None:
+    assert "`issue-7-x.md`" in load_prompt("memory", page="issue-7-x.md")
+    assert "{page}" in load_prompt("memory")

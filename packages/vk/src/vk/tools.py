@@ -54,7 +54,8 @@ def _str_arg(args: dict[str, Any], key: str, *, required: bool = True) -> str:
     return value
 
 
-def _truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
+def truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
+    """Cut `text` to `limit` characters, saying how much was dropped."""
     if len(text) <= limit:
         return text
     return text[:limit] + f"\n... [truncated {len(text) - limit} characters]"
@@ -99,8 +100,8 @@ def _bash(repo_dir: Path) -> Tool:
             raise ToolError(f"Command timed out after {BASH_TIMEOUT_S}s.") from None
         return {
             "exit_code": proc.returncode,
-            "stdout": _truncate(proc.stdout),
-            "stderr": _truncate(proc.stderr),
+            "stdout": truncate(proc.stdout),
+            "stderr": truncate(proc.stderr),
         }
 
     return Tool(
@@ -121,7 +122,7 @@ def _read_file(repo_dir: Path) -> Tool:
         limit = min(int(args.get("limit") or MAX_READ_LINES), MAX_READ_LINES)
         chunk = lines[offset - 1 : offset - 1 + limit]
         numbered = "\n".join(f"{offset + i}\t{line}" for i, line in enumerate(chunk))
-        return {"content": _truncate(numbered), "total_lines": len(lines)}
+        return {"content": truncate(numbered), "total_lines": len(lines)}
 
     return Tool(
         "read_file",
@@ -330,7 +331,7 @@ def _web_fetch() -> Tool:
         return {
             "status": status,
             "content_type": content_type,
-            "content": _truncate(text, MAX_WEB_CHARS),
+            "content": truncate(text, MAX_WEB_CHARS),
             "truncated": len(body) > MAX_WEB_BYTES or len(text) > MAX_WEB_CHARS,
         }
 
@@ -423,12 +424,10 @@ def artifact_tools(cfg: Config, can_save: bool) -> list[Tool]:
         return [read_tool]
     save_tool = Tool(
         "save_artifact",
-        "Save a Markdown document for another clan to read, and get back an id to hand "
-        "along. Use for long supporting detail the next clan needs but that does not fit "
-        "your structured output: a full research memo, deep analysis notes with file-level "
-        "detail and code excerpts. After saving, report the id in your structured output with "
-        "a few lines on what's in it, never the document itself. Not for a note that fits in "
-        "a sentence.",
+        "Save a Markdown document for another clan to read; you get back an id to hand along. "
+        "Use it for long detail that does not fit your structured output (a memo, "
+        "analysis notes). Report the id with a few lines on what is in it, never the "
+        "document itself. Not for a note that fits in a sentence.",
         _schema(
             {
                 "kind": {"type": "string", "enum": list(ARTIFACT_KINDS)},

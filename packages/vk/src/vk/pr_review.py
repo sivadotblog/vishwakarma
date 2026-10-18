@@ -8,9 +8,10 @@ from typing import Any, Literal
 
 from vk import runlog
 from vk.approval import Caller, Confirm
+from vk.clans import load_prompt
 from vk.config import Config
 from vk.github import GitHub, GitHubError
-from vk.models import CommentDecision, Implementation
+from vk.models import Analysis, Implementation, ItemTriage
 from vk.pipeline import (
     LoopResult,
     ModelFactory,
@@ -18,9 +19,12 @@ from vk.pipeline import (
     StageFailed,
     Stages,
     agent_instructions,
+    artifact_line,
+    dump,
     implement_and_review,
     load_notebook,
     review_findings,
+    revision_section,
     section,
 )
 from vk.tooling import ToolError
@@ -31,6 +35,7 @@ REPLY_MARKER = "<!-- vk:review-reply:{} -->"
 _REPLY_ID = re.compile(r"<!-- vk:review-reply:(\d+) -->")
 _CLOSES = re.compile(r"\bcloses\s+#(\d+)", re.IGNORECASE)
 UNSETTLED = "I couldn't settle on a response to this one, so a person should look at it."
+FIXES = ("fix_direct", "analyze")
 
 
 @dataclass(frozen=True)
@@ -44,6 +49,7 @@ class Item:
     path: str | None = None
     line: int | None = None
     thread: str = ""
+    diff_hunk: str = ""
 
     @property
     def ref(self) -> tuple[str, int]:
@@ -52,8 +58,12 @@ class Item:
 
     @property
     def key(self) -> int:
-        """The id the decider sees and answers with: reviews are negated so they never collide."""
+        """The id the triager sees and answers with: reviews are negated so they never collide."""
         return self.id if self.kind == "inline" else -self.id
+
+    @property
+    def name(self) -> str:
+        return f"{'review' if self.kind == 'review' else 'comment'} {self.id}"
 
     def label(self) -> str:
         if self.kind == "review":
@@ -62,11 +72,20 @@ class Item:
         return f"Comment {self.id}{where} by @{self.author}"
 
 
-def _unanswered(ops: PrOps, ctx: dict[str, Any]) -> tuple[list[Item], int]:
+@dataclass(frozen=True)
+class Repeat:
+    """An item that repeats an earlier one word for word; code answers it, no model call."""
+
+    item: Item
+    of: Item
+
+
+def _unanswered(ops: PrOps, ctx: dict[str, Any]) -> tuple[list[Item], list[Repeat], int]:
     """Unanswered inline comments, then unanswered review bodies, from trusted people only.
 
     Anyone can comment on a public repo's PR, so words from other authors never reach an
-    agent. Returns the items and how many were skipped for that reason.
+    agent. Returns the items for the triager, the repeats of an earlier item (answered by code,
+    see `_split_repeats`), and how many comments were skipped as untrusted.
     """
     me = ops.gh.me()
     trusted = ops.trusted
@@ -108,6 +127,7 @@ def _unanswered(ops: PrOps, ctx: dict[str, Any]) -> tuple[list[Item], int]:
                 c.get("path"),
                 c.get("line"),
                 "\n\n".join(earlier),
+                c.get("diff_hunk") or "",
             )
         )
 
@@ -119,7 +139,27 @@ def _unanswered(ops: PrOps, ctx: dict[str, Any]) -> tuple[list[Item], int]:
             continue
         if allowed(user.get("login", "unknown"), user.get("type"), f"review {r['id']}"):
             items.append(Item(r["id"], "review", user["login"], body))
-    return items, skipped
+    items, repeats = _split_repeats(items)
+    return items, repeats, skipped
+
+
+def _split_repeats(items: list[Item]) -> tuple[list[Item], list[Repeat]]:
+    """Keep the earliest of identical items; later copies become repeats of it.
+
+    Items are identical when the same author sent the same text (whitespace aside) as a review
+    body, or as an inline comment on the same path and line.
+    """
+    first: dict[tuple[object, ...], Item] = {}
+    keep, repeats = [], []
+    for item in items:  # GitHub lists comments and reviews oldest first
+        text = " ".join(item.body.split())
+        where = (item.path, item.line) if item.kind == "inline" else ()
+        original = first.setdefault((item.kind, item.author, *where, text), item)
+        if original is item:
+            keep.append(item)
+        else:
+            repeats.append(Repeat(item, original))
+    return keep, repeats
 
 
 def _render_item(item: Item) -> str:
@@ -127,6 +167,8 @@ def _render_item(item: Item) -> str:
     lines = [f"### Item {item.key}: {kind} by @{item.author}"]
     if item.path:
         lines.append(f"File: {item.path}" + (f", line {item.line}" if item.line else ""))
+    if item.diff_hunk:
+        lines += ["", "Code the comment is on (diff hunk):", "", "```diff", item.diff_hunk, "```"]
     lines += ["", item.body]
     if item.thread:
         lines += ["", "Rest of the thread:", "", item.thread]
@@ -144,21 +186,16 @@ def _files_text(files: list[dict[str, Any]]) -> str:
     )
 
 
-def _settle(
-    items: list[Item], decisions: list[CommentDecision]
-) -> dict[tuple[str, int], CommentDecision]:
-    """Exactly one decision per item: unknown ids and repeats dropped, gaps filled."""
+def _settle(items: list[Item], verdicts: list[ItemTriage]) -> dict[tuple[str, int], ItemTriage]:
+    """Exactly one verdict per item: unknown ids and repeats dropped, gaps filled."""
     by_key = {i.key: i for i in items}
-    settled: dict[tuple[str, int], CommentDecision] = {}
-    for d in decisions:
-        if d.comment_id in by_key:
-            settled.setdefault(by_key[d.comment_id].ref, d)
+    settled: dict[tuple[str, int], ItemTriage] = {}
+    for v in verdicts:
+        if v.item_id in by_key:
+            settled.setdefault(by_key[v.item_id].ref, v)
     for i in items:
         settled.setdefault(
-            i.ref,
-            CommentDecision(
-                comment_id=i.key, decision="wontfix", reason=UNSETTLED, fix_instructions=""
-            ),
+            i.ref, ItemTriage(item_id=i.key, verdict="skip", reason=UNSETTLED, instructions="")
         )
     return settled
 
@@ -168,8 +205,8 @@ def _changes(impl: Implementation, path: str | None) -> str:
     return "\n".join(f"- `{c.path}`: {c.change}" for c in entries) or "- (no per-file summary)"
 
 
-def _reply_text(item: Item, d: CommentDecision, loop: LoopResult | None, sha: str) -> str:
-    if d.decision == "wontfix" or loop is None:
+def _reply_text(item: Item, d: ItemTriage, loop: LoopResult | None, sha: str) -> str:
+    if d.verdict not in FIXES or loop is None:
         return d.reason
     if loop.approved:
         changes = _changes(loop.implementation, item.path)
@@ -212,7 +249,7 @@ def run_review(
     """
     ops = PrOps(gh, caller, confirm, pr_number)
     ctx = ops.context()
-    items, skipped = _unanswered(ops, ctx)
+    items, repeats, skipped = _unanswered(ops, ctx)
     ignored = f" Ignored {skipped} from untrusted authors." if skipped else ""
     if not items:
         return f"No unanswered review comments on PR #{pr_number}; nothing to do.{ignored}"
@@ -235,10 +272,12 @@ def run_review(
     started = time.monotonic()
     log.info("review PR #%d starting items=%d", pr_number, len(items))
     try:
-        notebook = load_notebook(cfg, issue, head, remote_url)
+        notebook = load_notebook(cfg, issue, pr.get("title", ""), head, remote_url)
         try:
             stages = Stages(cfg, model, remote_url, notebook)
-            summary = _handle(cfg, ops, stages, pr, issue, items, log_file["content"], head, base)
+            summary = _handle(
+                cfg, ops, stages, pr, issue, items, repeats, log_file["content"], head, base
+            )
         finally:
             notebook.close()
         summary += ignored
@@ -259,6 +298,7 @@ def _handle(
     pr: dict[str, Any],
     issue: int,
     items: list[Item],
+    repeats: list[Repeat],
     run_log: str,
     head: str,
     base: str,
@@ -269,10 +309,10 @@ def _handle(
         f"Head branch `{head}` at `{pr['head']['sha']}`, base `{base}`.",
         section("Run log", run_log),
     ]
-    decisions = stages.agent(
-        "decider",
-        list[CommentDecision],
-        agent_instructions(stages.cfg, "decider"),
+    verdicts = stages.agent(
+        "triager",
+        list[ItemTriage],
+        agent_instructions(stages.cfg, "triager", load_prompt("triager_review")),
         "\n\n".join(
             [
                 *context,
@@ -280,50 +320,74 @@ def _handle(
                 section("Unanswered items", "\n\n".join(_render_item(i) for i in items)),
             ]
         ),
-        ops.read_tools(),
     )
-    decided = _settle(items, decisions)
-    fixes = [i for i in items if decided[i.ref].decision == "fix"]
-    log.info("decider fix=%d wontfix=%d", len(fixes), len(items) - len(fixes))
+    decided = _settle(items, verdicts)
+    fixes = [i for i in items if decided[i.ref].verdict in FIXES]
+    investigate = any(decided[i.ref].verdict == "analyze" for i in fixes)
+    log.info(
+        "triager fix=%d (analyze=%s) other=%d", len(fixes), investigate, len(items) - len(fixes)
+    )
 
     loop: LoopResult | None = None
     if fixes:
         wanted = section(
             "Review comments to fix",
             "\n\n".join(
-                f"{_render_item(i)}\n\nWhat to change: {decided[i.ref].fix_instructions}"
+                f"{_render_item(i)}\n\n"
+                + (
+                    "What to change: "
+                    if decided[i.ref].verdict == "fix_direct"
+                    else "Investigate: "
+                )
+                + decided[i.ref].instructions
                 for i in fixes
             ),
         )
+        plan = []
+        if investigate:  # the analyst reads the PR branch and plans every fix item together
+            analysis = stages.clan(
+                "analyst",
+                "\n\n".join(
+                    [
+                        f"Plan the fixes for the review comments on pull request #{ops.number}.",
+                        *context,
+                        wanted,
+                    ]
+                ),
+                Analysis,
+                branch=head,
+            )
+            plan = [
+                section("Analysis", dump(analysis))
+                + artifact_line("Analysis", analysis.artifact_id)
+            ]
         task = "\n\n".join(
             [
                 f"Revise pull request #{ops.number}: address each review comment below.",
                 *context,
                 wanted,
-                section(
-                    "Revision requested",
-                    f"The work is already on branch `{head}`. Fetch it with checkout_branch, "
-                    "fix every comment above (or record in `deviations` why one should stand), "
-                    "and push to the same branch.",
-                ),
+                *plan,
+                revision_section(head),
             ]
         )
         brief = "\n\n".join(
-            [
-                f"Review the changes made for pull request #{ops.number} in response to "
-                "review comments. Treat each comment below as a criterion: judge whether it "
-                "is addressed correctly and nothing else broke.",
-                *context,
-                wanted,
-            ]
+            [load_prompt("review_brief", number=str(ops.number)), *context, wanted, *plan]
         )
         loop = implement_and_review(stages, task, brief, branch=head)
     sha = ops.context()["pull_request"]["head"]["sha"]
 
     failed = 0
+    posted = set()
     for item in items:
-        if not _post_reply(ops, item, _reply_text(item, decided[item.ref], loop, sha)):
+        if _post_reply(ops, item, _reply_text(item, decided[item.ref], loop, sha)):
+            posted.add(item.ref)
+        else:
             failed += 1
+    for repeat in repeats:  # only once the item they point to has its answer
+        text = f"This repeats {repeat.of.name}, answered there."
+        if repeat.of.ref in posted and _post_reply(ops, repeat.item, text):
+            continue
+        failed += 1
     if loop and not loop.approved:
         ops.comment(
             f"The reviewer still has findings on the fix for the review comments, after "
@@ -333,9 +397,9 @@ def _handle(
         )
 
     notes = "\n".join(
-        f"- {i.label()}: {decided[i.ref].decision}. {' '.join(decided[i.ref].reason.split())}"
+        f"- {i.label()}: {decided[i.ref].verdict}. {' '.join(decided[i.ref].reason.split())}"
         for i in items
-    )
+    ) + "".join(f"\n- {r.item.label()}: repeats {r.of.name}; answered there." for r in repeats)
     args: dict[str, Any] = {"issue_number": issue, "branch": head, "mode": "append", "notes": notes}
     if loop:
         args["implementation"] = loop.implementation.model_dump(mode="json", by_alias=True)
@@ -346,9 +410,10 @@ def _handle(
         raise StageFailed("run log", exc) from exc
 
     fixed = len(fixes) if loop and loop.approved else 0
+    total = len(items) + len(repeats)
     summary = (
-        f"Answered {len(items) - failed} of {len(items)} item(s) on PR #{ops.number}: "
-        f"{fixed} fixed, {len(items) - len(fixes)} explained"
+        f"Answered {total - failed} of {total} item(s) on PR #{ops.number}: "
+        f"{fixed} fixed, {total - len(fixes)} explained"
     )
     if loop and not loop.approved:
         summary += f", {len(fixes)} fix(es) pushed but the reviewer still has findings"

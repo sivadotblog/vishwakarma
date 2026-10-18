@@ -24,9 +24,6 @@ CLS = {
     "priority": "high",
     "complexity": "small",
     "affected_area": "api",
-    "actionable": True,
-    "needs_clarification": False,
-    "questions": [],
     "summary": "Reset emails are sent twice.",
 }
 ANALYSIS = {
