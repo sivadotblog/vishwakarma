@@ -98,3 +98,49 @@ The changes on branch `vk/refactor-ste-docs` successfully rewrite all 11 documen
 - pass: No code block, inline code, link target, or frontmatter key changes. (Line-by-line inspection of the diff verifies that code blocks, inline code snippets, command strings, env var names, label names, link targets, frontmatter keys, and MDX component tags/props remain untouched.)
 - pass: No sentence is longer than the STE limit (20 words procedural, 25 descriptive). (A full prose sentence audit across all 211 prose sentences confirmed that all procedural sentences are 20 words or fewer and all descriptive sentences are 25 words or fewer (maximum descriptive sentence count was 24 words).)
 - pass: `make check` passes (it includes the Astro build). (Running `make check` passed all stages cleanly: ruff check/format, mypy --strict, 205 pytest tests, prettier check, astro check (0 errors, 0 warnings), and astro static site build.)
+
+## Review round 1
+
+- Review 5562999721 by @sivadotblog: fix. Thank you for the thorough review. Your feedback correctly restores key factual details, aligns section titles with the sidebar, and improves Simplified Technical English word choices across the documentation pages. We will make all requested changes.
+
+### Changes
+
+Branch `vk/refactor-ste-docs` (base `main`).
+
+### Change summary
+
+- `apps/web/src/content/docs/advanced/index.md`: Restored 'Issue Handover' bullet label and verified STE compliance.
+- `apps/web/src/content/docs/api-reference/index.md`: Restored missing 'unhandled' in vk issue description and 'missing' in exit code 2 description; updated cumulative to total LLM token output.
+- `apps/web/src/content/docs/concepts/index.md`: Replaced 'transfer' with 'hand' and updated STE vocabulary terms ('write a clear implementation plan', 'collect context', 'unclear requirement', 'a person must take action', 'permanent run log', 'keep state').
+- `apps/web/src/content/docs/contribute/index.md`: Updated STE vocabulary terms ('keep the monorepo stable', 'separate workspaces').
+- `apps/web/src/content/docs/examples/index.md`: Updated STE vocabulary term ('makes small, exact edits').
+- `apps/web/src/content/docs/getting-started/index.md`: Aligned title frontmatter to 'Getting Started' and replaced 'transfer' with 'hand' across heading, description, and intro text.
+- `apps/web/src/content/docs/how-to-guides/index.md`: Restored review cycle workflow steps, updated PR branch checkout wording, replaced 'transfer' with 'hand', and removed 'operational' from description.
+- `apps/web/src/content/docs/index.mdx`: Replaced 'transfer' with 'hand' in card content.
+- `apps/web/src/content/docs/integrations/index.md`: Updated STE vocabulary term ('a common layer').
+- `apps/web/src/content/docs/release-notes/index.md`: Aligned nine-section list item reference to 'Getting Started'.
+
+### Verification
+
+- `make setup`: pass: installed Python packages via uv sync and JS dependencies via npm ci
+- `npx prettier --write apps/web/src/content/docs/`: pass: formatted markdown files in apps/web/src/content/docs/
+- `make check`: pass: ruff check, ruff format --check, mypy --strict, pytest (205 tests passed), prettier --check, astro check (0 errors, 0 warnings), and astro build all succeeded cleanly
+- `python3 -c sentence_length_check`: pass: verified zero long sentences (>20 procedural, >25 descriptive) across all modified documentation files
+
+### Deviations
+
+- None
+
+### Review
+
+Verdict: **approve**
+
+The implementation on branch `vk/refactor-ste-docs` correctly addresses all review comments from PR #24. Fact restorations (review cycle steps, exit code 2 missing status, and unhandled issue wording), sidebar title alignments ('Getting Started'), domain terminology updates ('hand' instead of 'transfer'), and STE vocabulary dictionary replacements were accurately applied. Verification with `make check` passes completely with zero errors or warnings.
+
+### Criteria results
+
+- pass: Restore facts the rewrite changed in how-to-guides/index.md and api-reference/index.md (how-to-guides/index.md contains the split workflow trigger steps and the explicit PR branch checkout wording ('Vishwakarma checks out the PR branch, reads the review comments, and answers each comment.'). api-reference/index.md retains 'unhandled' in vk issue description and 'missing' in exit code 2 description.)
+- pass: Keep section names in line with sidebar ('Getting Started' in getting-started/index.md frontmatter and release-notes/index.md) (getting-started/index.md has frontmatter `title: Getting Started` and release-notes/index.md lists 'Getting Started' in its nine-section summary.)
+- pass: Use 'hand' instead of 'transfer' across documentation pages (All target pages (getting-started/index.md, how-to-guides/index.md, concepts/index.md, index.mdx, advanced/index.md) now consistently use 'hand' or 'Handover' rather than 'transfer'.)
+- pass: Replace non-STE vocabulary terms with dictionary-approved alternatives (All requested vocabulary replacements in concepts/index.md, contribute/index.md, api-reference/index.md, integrations/index.md, how-to-guides/index.md, and examples/index.md were correctly implemented without altering permission role string literals.)
+- pass: Verification, safety, and sentence constraints (STE limits <=20/25, untouched code blocks/links, make check passes) (make check passed cleanly across all linters, type checkers, test suites, and Astro site build. Code blocks, inline identifiers, and link targets remain untouched.)
