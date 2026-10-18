@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 from pydantic_ai.models.google import GoogleModel
-from pydantic_ai.models.openai import OpenAIChatModel
 
 from vk.config import Config, ConfigError, build_model
 
@@ -33,14 +32,6 @@ def test_legacy_litellm_string_is_rejected() -> None:
         build_model(make_cfg("gemini/gemini-3.5-flash"), "analyst", {})
 
 
-def test_gateway_url_builds_openai_chat_model() -> None:
-    env = {"VK_LLM_BASE_URL": "http://gw.local/v1", "VK_LLM_API_KEY": "k"}
-    model = build_model(make_cfg("whatever"), "analyst", env)
-    assert isinstance(model, OpenAIChatModel)
-    assert model.model_name == "whatever"
-    assert str(model.client.base_url).startswith("http://gw.local/v1")
-
-
 def test_google_uses_gemini_api_key() -> None:
     model = build_model(make_cfg("google:gemini-x"), "analyst", {"GEMINI_API_KEY": "gem"})
     assert isinstance(model, GoogleModel)
@@ -49,7 +40,6 @@ def test_google_uses_gemini_api_key() -> None:
 
 
 def test_google_reads_process_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("VK_LLM_BASE_URL", raising=False)
     monkeypatch.setenv("GEMINI_API_KEY", "gem")
     model = build_model(make_cfg("google:gemini-x"), "analyst")
     assert isinstance(model, GoogleModel)

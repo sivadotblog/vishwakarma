@@ -8,9 +8,7 @@ from pathlib import Path
 
 from pydantic_ai.models import Model
 from pydantic_ai.models.google import GoogleModel
-from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.google import GoogleProvider
-from pydantic_ai.providers.openai import OpenAIProvider
 
 CLANS = ("orchestrator", "classifier", "researcher", "analyst", "implementer", "reviewer")
 
@@ -76,17 +74,14 @@ def load_config(env: dict[str, str] | None = None, cwd: Path | None = None) -> C
 
 
 def build_model(cfg: Config, clan: str, env: dict[str, str] | None = None) -> Model | str:
-    """Return the PydanticAI model for `clan`: a native `provider:model` string, or a gateway model.
+    """Return the PydanticAI model for `clan`: a native `provider:model` string.
 
-    With `VK_LLM_BASE_URL` set, every model name is sent to that OpenAI-compatible gateway
-    (key from `VK_LLM_API_KEY`). `google:` models read `GEMINI_API_KEY` first (the existing CI
-    secret), then fall back to the provider's own default (`GOOGLE_API_KEY`).
+    `google:` models read `GEMINI_API_KEY` first (the existing CI secret), then fall back to the
+    provider's own default (`GOOGLE_API_KEY`).
     """
     e = dict(os.environ) if env is None else env
     name = cfg.model_for(clan)
-    if base_url := e.get("VK_LLM_BASE_URL"):
-        provider = OpenAIProvider(base_url=base_url, api_key=e.get("VK_LLM_API_KEY"))
-        return OpenAIChatModel(name, provider=provider)
+    # The VK_LLM_BASE_URL gateway route lands with step 6, together with the `openai` extra.
     if ":" not in name:
         raise ConfigError(
             f"Model {name!r} for {clan!r} must be 'provider:model', e.g. 'google:gemini-3.5-flash'."
