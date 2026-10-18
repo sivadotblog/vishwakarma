@@ -1,15 +1,15 @@
 ---
 title: Integrations
-description: Integrating Vishwakarma with GitHub Actions workflows and PydanticAI model providers.
+description: Integrate Vishwakarma with GitHub Actions workflows and PydanticAI model providers.
 ---
 
-Vishwakarma integrates with GitHub Actions CI/CD pipelines and LLM providers via PydanticAI.
+Vishwakarma integrates with GitHub Actions CI/CD pipelines and LLM providers with PydanticAI.
 
 ## GitHub Actions Integration
 
 ### Issue Handler Workflow (`.github/workflows/vishwakarma.yml`)
 
-The primary workflow triggers when an issue is labeled `vk`:
+The primary workflow starts when you add the `vk` label to an issue:
 
 ```yaml
 name: Vishwakarma (software factory)
@@ -55,7 +55,7 @@ jobs:
 
 ## Model Providers (PydanticAI)
 
-Vishwakarma uses PydanticAI as an abstraction layer across model providers. Supported providers and required environment variables include:
+Vishwakarma uses PydanticAI as a common layer across model providers. These tables list supported providers and environment variables:
 
 | Provider          | Model Example                    | API Key Variable                   |
 | ----------------- | -------------------------------- | ---------------------------------- |
