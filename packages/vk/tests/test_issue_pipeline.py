@@ -176,10 +176,14 @@ def test_agents_get_self_contained_messages_and_the_right_tools(cfg: Config, rem
 
     by_agent = {c.agent: c for c in calls}
     triage = by_agent["triage"]
-    assert triage.tools and all(t.startswith("github__") for t in triage.tools)
-    reads = {"github__getIssueContext", "github__searchIssues", "github__listLabels"}
-    writes = {"github__addIssueComment", "github__addLabels", "github__createPullRequest"}
-    assert reads <= set(triage.tools) and not writes & set(triage.tools)
+    assert set(triage.tools) == {
+        "github__searchIssues",
+        "github__listIssues",
+        "github__getIssueContext",
+        "github__listIssueComments",
+        "github__listLabels",
+    }
+    assert len(triage.tools) == 5
     assert "Triaging Issues" in triage.instructions and "How you write" in triage.instructions
     assert "enhancement" in triage.prompt  # the repo's label vocabulary
     assert by_agent["pr_writer"].tools == []

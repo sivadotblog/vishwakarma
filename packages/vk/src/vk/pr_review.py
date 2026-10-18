@@ -44,6 +44,7 @@ class Item:
     path: str | None = None
     line: int | None = None
     thread: str = ""
+    diff_hunk: str = ""
 
     @property
     def ref(self) -> tuple[str, int]:
@@ -108,6 +109,7 @@ def _unanswered(ops: PrOps, ctx: dict[str, Any]) -> tuple[list[Item], int]:
                 c.get("path"),
                 c.get("line"),
                 "\n\n".join(earlier),
+                c.get("diff_hunk") or "",
             )
         )
 
@@ -127,6 +129,8 @@ def _render_item(item: Item) -> str:
     lines = [f"### Item {item.key}: {kind} by @{item.author}"]
     if item.path:
         lines.append(f"File: {item.path}" + (f", line {item.line}" if item.line else ""))
+    if item.diff_hunk:
+        lines += ["", "Code the comment is on (diff hunk):", "", "```diff", item.diff_hunk, "```"]
     lines += ["", item.body]
     if item.thread:
         lines += ["", "Rest of the thread:", "", item.thread]
@@ -280,7 +284,7 @@ def _handle(
                 section("Unanswered items", "\n\n".join(_render_item(i) for i in items)),
             ]
         ),
-        ops.read_tools(),
+        [],
     )
     decided = _settle(items, decisions)
     fixes = [i for i in items if decided[i.ref].decision == "fix"]

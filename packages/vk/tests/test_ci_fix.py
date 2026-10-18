@@ -137,7 +137,7 @@ def test_an_attempt_is_announced_diagnosed_fixed_and_reported(
 
     assert [c.agent for c in calls] == ["ci_diagnoser", "implementer", "reviewer"]
     diagnoser = calls[0]
-    assert all(t.startswith("github__") for t in diagnoser.tools)
+    assert diagnoser.tools == []  # the failure context is in its message
     assert "CI diagnoser" in diagnoser.instructions and "How you write" in diagnoser.instructions
     assert "ruff: F401 unused import in a.py" in diagnoser.prompt
     assert "Remove the unused import from a.py." in calls[1].prompt and BRANCH in calls[1].prompt

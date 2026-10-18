@@ -5,7 +5,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -38,6 +38,11 @@ MAX_CI_FIX_ATTEMPTS = 2
 STATUS_LABELS = ("vk:in-progress", "vk:pr-open", "vk:needs-info", "vk:blocked")
 IN_PROGRESS, PR_OPEN, NEEDS_INFO, BLOCKED = STATUS_LABELS
 TRUSTED_ROLES = {"admin", "maintain", "write", "triage"}  # same bar as the workflow's check
+
+# Triage only reads issues and labels: repository code is for the clans, from their own clone.
+TRIAGE_TOOLS = frozenset(
+    {"searchIssues", "listIssues", "getIssueContext", "listIssueComments", "listLabels"}
+)
 
 ModelFactory = Callable[[str], Model]
 
@@ -130,8 +135,13 @@ class Ops:
     def call(self, tool: str, /, **args: Any) -> Any:
         return self._tools[PREFIX + tool].fn(args)
 
-    def read_tools(self) -> list[Tool]:
-        return [t for t in self._tools.values() if t.name.removeprefix(PREFIX) in READS]
+    def read_tools(self, only: Collection[str] | None = None) -> list[Tool]:
+        """The read-only GitHub tools, or just those named in `only`."""
+        return [
+            t
+            for t in self._tools.values()
+            if (name := t.name.removeprefix(PREFIX)) in READS and (only is None or name in only)
+        ]
 
     def trusted(self, login: str) -> bool:
         """Whether a login holds a role that may hand work to the factory; cached per run."""
@@ -171,12 +181,12 @@ class IssueOps(Ops):
                 kept.append(c)
         return kept, len(comments) - len(kept)
 
-    def read_tools(self) -> list[Tool]:
+    def read_tools(self, only: Collection[str] | None = None) -> list[Tool]:
         """Read tools, with this issue's comments screened wherever an agent could fetch them."""
         screened = {"getIssueContext", "listIssueComments"}
         return [
             replace(t, fn=self._screen(t)) if t.name.removeprefix(PREFIX) in screened else t
-            for t in super().read_tools()
+            for t in super().read_tools(only)
         ]
 
     def _screen(self, tool: Tool) -> Callable[[dict[str, Any]], Any]:
@@ -473,7 +483,7 @@ def _run(
         Triage,
         agent_instructions(cfg, "triage", load_skill("triaging-issues")),
         f"{issue}\n\n## Existing labels\n\n" + ("\n".join(repo_labels) or "(none)"),
-        ops.read_tools(),
+        ops.read_tools(TRIAGE_TOOLS),
     )
     log.info("triage proceed=%s duplicate_of=%s", triage.proceed, triage.duplicate_of)
     # Code decides which labels apply: only ones the repo already has, never a status label.

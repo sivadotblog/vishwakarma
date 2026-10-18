@@ -57,7 +57,9 @@ def comment(
     **extra: Any,
 ) -> Any:
     who = {"login": user, "type": user_type}
-    return {"id": id, "user": who, "body": body, "path": "a.py", "line": 3, **extra}
+    hunk = f"@@ -1,3 +1,3 @@\n+hunk for {id}"
+    base = {"id": id, "user": who, "body": body, "path": "a.py", "line": 3, "diff_hunk": hunk}
+    return {**base, **extra}
 
 
 def review(id: int, body: str, state: str = "CHANGES_REQUESTED", kind: str = "User") -> Any:
@@ -179,11 +181,17 @@ def test_one_fix_and_one_wontfix_are_both_answered(
 
     assert [c.agent for c in calls] == ["decider", "implementer", "reviewer"]
     decider_call, implementer_call = calls[0], calls[1]
-    assert decider_call.tools and all(t.startswith("github__") for t in decider_call.tools)
-    assert "github__replyToReviewComment" not in decider_call.tools
+    assert decider_call.tools == []  # decides from its message; no GitHub tools, no clone
     assert "Review comment decider" in decider_call.instructions
     assert "How you write" in decider_call.instructions
-    for text in (RUN_LOG.strip(), "a.py (modified, +3 -1)", "Please add a guard", "Item 102"):
+    for text in (
+        RUN_LOG.strip(),
+        "a.py (modified, +3 -1)",
+        "Please add a guard",
+        "Item 102",
+        "+hunk for 101",
+        "+hunk for 102",
+    ):
         assert text in decider_call.prompt
     assert (
         BRANCH in implementer_call.prompt

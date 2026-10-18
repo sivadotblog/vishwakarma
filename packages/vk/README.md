@@ -86,8 +86,10 @@ Both only run for people with at least triage permission.
 Issue and PR text is untrusted input. `vk` only passes on, and acts on, comments written by the
 issue author, VK itself, and collaborators with triage permission or higher. `vk review` handles
 review comments from those collaborators only; comments from outsiders and other bots are
-ignored and never reach an agent. Agents get read-only GitHub tools; every GitHub write comes
-from code, through the approval policies.
+ignored and never reach an agent. Repository code is read only by the clans, from their local
+clone. The judgment agents decide from what code hands them: `decider`, `ci_diagnoser` and
+`pr_writer` have no tools, and `triage` has only the read-only issue and label tools. Every GitHub
+write comes from code, through the approval policies.
 
 ## Example GitHub Actions workflow
 

@@ -206,6 +206,7 @@ def _review_comments(gh: GitHub, a: Args) -> Any:
                 "id": c["id"],
                 "path": c.get("path"),
                 "line": c.get("line") or c.get("original_line"),
+                "diff_hunk": c.get("diff_hunk"),
                 "body": c["body"],
                 "user": c["user"]["login"],
                 "user_type": c["user"].get("type"),
@@ -538,7 +539,7 @@ def _specs() -> list[Spec]:
         ),
         Spec(
             "listReviewComments",
-            "List inline review comments on a PR, each with an `answered` flag.",
+            "List inline review comments on a PR, each with its diff hunk and an `answered` flag.",
             s(["pull_number"], **_PR),
             _review_comments,
         ),

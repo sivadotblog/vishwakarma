@@ -13,7 +13,7 @@ PydanticAI that works with any provider PydanticAI supports.
 | Agent runtime | PydanticAI: one `Agent` per clan and per judgment agent (`triage`, `pr_writer`, `decider`, `ci_diagnoser`), each with a typed Pydantic output (`ToolOutput`, 3 output retries); `agents.run_typed` runs it under an output-token budget |
 | Models | Native `provider:model` strings (`google:gemini-3.5-flash`): env `VK_MODEL`, overridden per agent with `VK_MODEL_<AGENT>`. `build_model` is the one place a gateway such as Kong can be added later |
 | Intake | CLI subcommands calling `pipeline.run_issue`, `pr_review.run_review`, `ci_fix.run_ci_fix` |
-| Control flow | Python: status labels, progress comments, the clarification stop, the ≤2 revision loop, run-log and memory commits, the draft PR, every review reply. Agents get read-only GitHub tools; every GitHub write goes through the guarded `github__*` tools from code |
+| Control flow | Python: status labels, progress comments, the clarification stop, the ≤2 revision loop, run-log and memory commits, the draft PR, every review reply. Repository code is read only by clans, from their clone; judgment agents decide from their message (`decider`, `ci_diagnoser` and `pr_writer` have no tools, `triage` only issue and label reads). Every GitHub write goes through the guarded `github__*` tools from code |
 | GitHub tools | `github.py`: thin REST client on `requests` behind an allowlist, tools named `github__<name>` |
 | Credentials | `GITHUB_TOKEN` env var |
 | Identity | A GitHub App: workflows mint an installation token and set `VK_BOT_LOGIN`, so VK's comments are told apart from people's and its pushes trigger CI |
@@ -230,7 +230,7 @@ def validate_branch(branch: str) -> str | None:
 
 - **Direction B, code-driven**: Python sequences the pipeline and enforces every "never" rule
   (status labels, ≤2 revision cycles, run log before the PR, `Closes #N`, a reply to every
-  comment); agents only judge and get read-only GitHub tools. This replaced an LLM orchestrator
+  comment); agents only judge, from what code hands them (no repo reads outside the clans). This replaced an LLM orchestrator
   whose prompt encoded the control flow.
 - **Model-written memory is untrusted**: notes are written by a model that reads issue and
   review text, so they may carry an injected claim. Every note lands in the PR diff and a
