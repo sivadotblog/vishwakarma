@@ -80,20 +80,22 @@ def test_shipped_settings_load_and_list_every_clan() -> None:
     assert settings.defaults.max_total_tokens is None
     assert settings.defaults.max_requests is None
     assert settings.git.setup_command == ""
+    assert settings.compaction.enabled is True
 
 
 def test_clan_table_overrides_only_the_keys_it_sets(tmp_path: Path) -> None:
     path = write_toml(
         tmp_path,
-        "\n[clans.implementer]\n",
-        '\n[clans.implementer]\nmodel = "anthropic:x"\nmax_total_tokens = 500\n',
+        "\n[clans.reviewer]\n",
+        '\n[clans.reviewer]\nmodel = "anthropic:x"\nmax_total_tokens = 500\n',
     )
     settings = read_settings(path)
-    implementer = settings.clan("implementer")
-    assert implementer.model == "anthropic:x"
-    assert implementer.max_total_tokens == 500
-    assert implementer.max_output_tokens == settings.defaults.max_output_tokens
-    assert settings.clan("reviewer") == settings.defaults
+    reviewer = settings.clan("reviewer")
+    assert reviewer.model == "anthropic:x"
+    assert reviewer.max_total_tokens == 500
+    assert reviewer.max_output_tokens == settings.defaults.max_output_tokens
+    assert settings.clan("classifier") == settings.defaults
+    assert settings.clan("implementer").model == "google:gemini-3.1-pro-preview"
 
 
 def test_vk_config_selects_another_file(tmp_path: Path) -> None:
@@ -111,6 +113,8 @@ def test_vk_config_selects_another_file(tmp_path: Path) -> None:
         ('model = "google:', 'model = "gemini/', "provider:model"),
         ("[clans.pr_writer]", '[clans.pr_writer]\nmodel = "gemini-3.5-flash"', "provider:model"),
         ("max_output_tokens = 100_000", "max_output_tokens = 0", "greater than 0"),
+        ("keep_pairs = 6", "keep_pairs = 0", "greater than 0"),
+        ("enabled = true", 'enabled = "maybe"', "valid boolean"),
         ("max_output_tokens = 100_000", 'max_output_tokens = "abc"', "valid integer"),
         ("max_input_tokens = 2_000_000", "max_input_tokens = 12.3", "valid integer"),
         ("[prefect]", "[prefect", "not valid TOML"),

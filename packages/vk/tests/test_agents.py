@@ -14,7 +14,7 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
-from vk.agents import adapt, run_typed
+from vk.agents import adapt, compaction, run_typed
 from vk.config import ClanOverride, Config
 from vk.tooling import Tool, ToolError
 
@@ -255,7 +255,7 @@ def test_tool_calls_in_one_turn_run_in_order_without_overlap() -> None:
 
 def test_per_request_usage_and_totals_are_logged(caplog: pytest.LogCaptureFixture) -> None:
     def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        usage = RequestUsage(input_tokens=100, output_tokens=5)
+        usage = RequestUsage(input_tokens=100, output_tokens=5, cache_read_tokens=60)
         if not tool_returns(messages):
             return ModelResponse(parts=[ToolCallPart("echo", {"x": 1})], usage=usage)
         return final(info, {"verdict": "ok", "note": None}, usage=usage)
@@ -267,12 +267,15 @@ def test_per_request_usage_and_totals_are_logged(caplog: pytest.LogCaptureFixtur
     for turn in (1, 2):
         assert any(
             line.startswith("llm analyst model=")
-            and line.endswith(f"turn={turn} prompt_tokens=100 completion_tokens=5 total_tokens=105")
+            and line.endswith(
+                f"turn={turn} prompt_tokens=100 cached_tokens=60 completion_tokens=5"
+                " total_tokens=105"
+            )
             for line in lines
         )
     assert (
-        "agent analyst done status=ok turns=2 prompt_tokens=200 completion_tokens=10"
-        " total_tokens=210" in lines
+        "agent analyst done status=ok turns=2 prompt_tokens=200 cached_tokens=120"
+        " completion_tokens=10 total_tokens=210" in lines
     )
 
 
@@ -289,10 +292,72 @@ def test_usage_is_logged_when_the_run_fails(caplog: pytest.LogCaptureFixture) ->
     lines = [r.getMessage() for r in caplog.records]
     assert any(
         line.startswith("llm analyst model=")
-        and line.endswith("turn=1 prompt_tokens=100 completion_tokens=50 total_tokens=150")
+        and line.endswith(
+            "turn=1 prompt_tokens=100 cached_tokens=0 completion_tokens=50 total_tokens=150"
+        )
         for line in lines
     )
     assert (
         "agent analyst done status=failed error=UsageLimitExceeded turns=1 prompt_tokens=100"
-        " completion_tokens=50 total_tokens=150" in lines
+        " cached_tokens=0 completion_tokens=50 total_tokens=150" in lines
     )
+
+
+def test_tool_calls_are_logged_with_a_short_argument(caplog: pytest.LogCaptureFixture) -> None:
+    sink = Tool("t", "t", {"type": "object"}, lambda _: "ok")
+    call: Callable[..., Any] = adapt(sink, MAX_OUTPUT_CHARS).function
+    with caplog.at_level(logging.INFO, logger="vk.agents"):
+        call(path="src/a.py", content="SECRET BODY")
+        call(command="x" * 200)
+        call(other=1)
+    lines = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+    assert lines == ["tool t path=src/a.py", f"tool t command={'x' * 80}", "tool t "]
+    assert not any("SECRET" in line for line in lines)
+
+
+def test_compaction_follows_the_settings() -> None:
+    on = make_cfg()
+    off = with_settings(on, compaction={"enabled": False})
+    names = [type(c).__name__ for c in compaction(on)]
+    assert names == ["DeduplicateFileReads", "ClearToolResults"]
+    assert compaction(off) == []
+
+
+def test_compaction_clears_old_tool_results_during_a_run() -> None:
+    cfg = with_settings(
+        make_cfg(),
+        compaction={"clear_after_tokens": 1, "keep_pairs": 1, "min_clear_tokens": 1},
+    )
+    big = Tool("big", "b", {"type": "object"}, lambda _: "y" * 20_000)
+    seen: list[list[str]] = []
+
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append([str(p.content) for p in tool_returns(messages)])
+        if len(seen) < 4:
+            return ModelResponse(parts=[ToolCallPart("big", {})])
+        return final(info, {"verdict": "ok", "note": None})
+
+    run_typed("analyst", Verdict, "be brief", "go", [big], cfg, model=FunctionModel(fn))
+    *older, newest = seen[-1]
+    assert older and all(c == "[tool result cleared]" for c in older)
+    assert newest.startswith("yyy")
+
+
+def test_rereading_the_same_range_supersedes_the_earlier_read() -> None:
+    reader = Tool("read_file", "r", {"type": "object"}, lambda a: f"body of {a['path']}")
+    calls: list[dict[str, Any]] = [
+        {"path": "a.md"},
+        {"path": "b.md"},
+        {"path": "a.md"},
+        {"path": "a.md", "offset": 5},
+    ]
+    seen: list[list[str]] = []
+
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append([str(p.content) for p in tool_returns(messages)])
+        if len(seen) <= len(calls):
+            return ModelResponse(parts=[ToolCallPart("read_file", calls[len(seen) - 1])])
+        return final(info, {"verdict": "ok", "note": None})
+
+    run_typed("analyst", Verdict, "be brief", "go", [reader], make_cfg(), model=FunctionModel(fn))
+    assert seen[-1] == ["[superseded file read]", "body of b.md", "body of a.md", "body of a.md"]
