@@ -6,7 +6,7 @@
 
 # Every clan gets these unless its own [clans.<name>] table sets a value.
 [defaults]
-model = "google:gemini-3.5-flash" # native provider:model
+model = "google:gemini-3.8-flash" # native provider:model
 max_input_tokens = 2_000_000      # per agent run
 max_output_tokens = 100_000       # per agent run
 # max_total_tokens = 2_100_000    # input + output per agent run; unset = no limit
@@ -19,8 +19,10 @@ output_retries = 3                # retries when the structured output fails val
 #   max_output_tokens = 200_000
 [clans.classifier]
 [clans.researcher]
-[clans.analyst]
+[clans.analyst] # Pro for the planning and coding clans, on trial against Flash
+model = "google:gemini-3.1-pro-preview"
 [clans.implementer]
+model = "google:gemini-3.1-pro-preview"
 [clans.reviewer]
 [clans.triager]
 [clans.pr_writer]
@@ -57,3 +59,11 @@ log_tail_chars = 4_000 # of each failed CI job log handed to the CI diagnoser
 [prefect]
 repo = "sivadotblog/vishwakarma"
 flow_timeout_s = 3_600
+
+# Shrinks old tool results so each later turn re-sends less. Rewriting history breaks the model's
+# prompt cache, so compare cached_tokens in the logs with it on and off.
+[compaction]
+enabled = true
+clear_after_tokens = 60_000 # start clearing old tool results once the history is this large
+keep_pairs = 6              # newest tool call/result pairs always kept intact
+min_clear_tokens = 4_000    # skip a clear that saves less than this (not worth a cache miss)

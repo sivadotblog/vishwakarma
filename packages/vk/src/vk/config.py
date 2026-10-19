@@ -101,6 +101,13 @@ class GitHubSettings(_Section):
     log_tail_chars: PositiveInt
 
 
+class CompactionSettings(_Section):
+    enabled: bool
+    clear_after_tokens: PositiveInt
+    keep_pairs: PositiveInt
+    min_clear_tokens: PositiveInt
+
+
 class PrefectSettings(_Section):
     repo: str
     flow_timeout_s: PositiveInt
@@ -117,6 +124,7 @@ class Settings(_Section):
     git: GitSettings
     github: GitHubSettings
     prefect: PrefectSettings
+    compaction: CompactionSettings
 
     @field_validator("clans")
     @classmethod

@@ -5,12 +5,20 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
-from pydantic_ai import Agent, ModelMessage, ModelResponse, ToolOutput, capture_run_messages
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelResponse,
+    ToolCallPart,
+    ToolOutput,
+    capture_run_messages,
+)
 from pydantic_ai import Tool as AiTool
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ToolFailed
 from pydantic_ai.models import Model
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
+from pydantic_ai_harness import ClearToolResults, DeduplicateFileReads
 
 from vk.config import Config, build_model
 from vk.tooling import Tool
@@ -18,12 +26,16 @@ from vk.tools import truncate
 
 log = logging.getLogger(__name__)
 
+# Results the model cannot cheaply fetch again, so compaction never clears them.
+KEEP_RESULTS = frozenset({"read_artifact", "read_memory", "search_memory"})
+_BRIEF_KEYS = ("path", "pattern", "url", "id", "branch")
+
 
 def adapt(tool: Tool, max_chars: int) -> AiTool[None]:
     """Wrap a VK `Tool` so any failure goes back to the model without using retry budget."""
 
     def call(**kwargs: Any) -> str:
-        log.info("tool %s", tool.name)
+        log.info("tool %s %s", tool.name, _brief(kwargs))
         log.debug("tool %s args=%s", tool.name, kwargs)
         try:
             result = tool.fn(kwargs)
@@ -43,6 +55,40 @@ def adapt(tool: Tool, max_chars: int) -> AiTool[None]:
         # Tools share one clone, so keep the old in-order semantics: never run calls concurrently.
         sequential=True,
     )
+
+
+def _brief(args: dict[str, Any]) -> str:
+    """The argument that says what a tool call did, short enough for an INFO line."""
+    for key in _BRIEF_KEYS:
+        if isinstance(value := args.get(key), str):
+            return f"{key}={value}"
+    if isinstance(command := args.get("command"), str):
+        return f"command={command[:80]}"
+    return ""
+
+
+def _read_key(call: ToolCallPart) -> str | None:
+    """`read_file` calls that read the same range of a file supersede each other."""
+    if call.tool_name != "read_file":
+        return None
+    args = call.args_as_dict()
+    return f"{args.get('path')}:{args.get('offset')}:{args.get('limit')}"
+
+
+def compaction(cfg: Config) -> list[AbstractCapability[None]]:
+    """Harness compaction from `[compaction]`: drop superseded reads, then clear old results."""
+    c = cfg.settings.compaction
+    if not c.enabled:
+        return []
+    return [
+        DeduplicateFileReads(file_key=_read_key),
+        ClearToolResults(
+            max_tokens=c.clear_after_tokens,
+            keep_pairs=c.keep_pairs,
+            min_clear_tokens=c.min_clear_tokens,
+            exclude_tools=KEEP_RESULTS,
+        ),
+    ]
 
 
 def run_typed[T](
@@ -67,7 +113,9 @@ def run_typed[T](
         instructions=instructions,
         output_type=output_type if output_type is str else ToolOutput(output_type),
         tools=[adapt(t, cfg.settings.tools.max_output_chars) for t in tools],
-        capabilities=list(capabilities),
+        # Compaction goes first: it rebuilds the request from the run history, which would drop
+        # anything an earlier capability (the memory block) injected into this request.
+        capabilities=[*compaction(cfg), *capabilities],
         retries={"output": clan.output_retries},
     )
     model_name = llm if isinstance(llm, str) else llm.model_name
@@ -106,27 +154,32 @@ def _log_usage(
     extra = RequestUsage(
         input_tokens=usage.input_tokens - sum(u.input_tokens for u in per_request),
         output_tokens=usage.output_tokens - sum(u.output_tokens for u in per_request),
+        cache_read_tokens=usage.cache_read_tokens - sum(u.cache_read_tokens for u in per_request),
     )
     if extra.total_tokens > 0:
         per_request.append(extra)
     for turn, request in enumerate(per_request, start=1):
         log.info(
-            "llm %s model=%s turn=%d prompt_tokens=%d completion_tokens=%d total_tokens=%d",
+            "llm %s model=%s turn=%d prompt_tokens=%d cached_tokens=%d completion_tokens=%d"
+            " total_tokens=%d",
             name,
             model_name,
             turn,
             request.input_tokens,
+            request.cache_read_tokens,
             request.output_tokens,
             request.total_tokens,
         )
     status = "ok" if failure is None else f"failed error={type(failure).__name__}"
     log.log(
         logging.INFO if failure is None else logging.WARNING,
-        "agent %s done status=%s turns=%d prompt_tokens=%d completion_tokens=%d total_tokens=%d",
+        "agent %s done status=%s turns=%d prompt_tokens=%d cached_tokens=%d completion_tokens=%d"
+        " total_tokens=%d",
         name,
         status,
         len(per_request),
         usage.input_tokens,
+        usage.cache_read_tokens,
         usage.output_tokens,
         usage.total_tokens,
     )
