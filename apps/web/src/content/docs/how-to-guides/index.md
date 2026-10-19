@@ -31,35 +31,26 @@ Vishwakarma uses PydanticAI to integrate with model providers such as Anthropic,
 
 ### Default Model Configuration
 
-Set the `VK_MODEL` environment variable (or GitHub Actions variable/secret) to specify the default model for all clans:
+Set `model` in the `[defaults]` table of `packages/vk/src/vk/vk.toml` to specify the default model for all clans:
 
-```bash
-export VK_MODEL="anthropic:claude-3-5-sonnet"
+```toml
+[defaults]
+model = "anthropic:claude-sonnet-5-5"
 ```
 
-In GitHub Actions (`.github/workflows/vishwakarma.yml`):
+### Per-Clan Models and Token Budgets
 
-```yaml
-env:
-  VK_MODEL: ${{ vars.VK_MODEL || 'google:gemini-3.5-flash' }}
+Each clan has a table in the same file: `[clans.classifier]`, `[clans.researcher]`, `[clans.analyst]`, `[clans.implementer]`, `[clans.reviewer]`, `[clans.triager]`, `[clans.pr_writer]`, and `[clans.ci_diagnoser]`. A key in a clan table overrides the `[defaults]` value for that clan. The keys are `model`, `max_input_tokens`, `max_output_tokens`, `max_total_tokens`, `max_requests`, and `output_retries`.
+
+This example sets a small model for classification and a large model with a bigger budget for implementation:
+
+```toml
+[clans.classifier]
+model = "google:gemini-2.5-flash"
+
+[clans.implementer]
+model = "anthropic:claude-sonnet-5-5"
+max_output_tokens = 200_000
 ```
 
-### Per-Clan Model Overrides
-
-You can assign specific models to individual clans with per-clan environment variables:
-
-- `VK_MODEL_CLASSIFIER`
-- `VK_MODEL_RESEARCHER`
-- `VK_MODEL_ANALYST`
-- `VK_MODEL_IMPLEMENTER`
-- `VK_MODEL_REVIEWER`
-- `VK_MODEL_TRIAGER`
-- `VK_MODEL_PR_WRITER`
-- `VK_MODEL_CI_DIAGNOSER`
-
-This example sets a small model for classification and a large model for implementation:
-
-```bash
-export VK_MODEL_CLASSIFIER="google:gemini-2.5-flash"
-export VK_MODEL_IMPLEMENTER="anthropic:claude-3-5-sonnet"
-```
+To use a different file without editing the shipped one, set `VK_CONFIG` to its path.

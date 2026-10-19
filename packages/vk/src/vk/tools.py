@@ -12,20 +12,9 @@ from typing import Any, ClassVar
 
 import requests
 
-from vk.config import Config
+from vk.config import Config, ToolSettings
 from vk.tooling import Tool, ToolError
 
-BASH_TIMEOUT_S = 300
-MAX_OUTPUT_CHARS = 30_000
-MAX_READ_LINES = 2000
-MAX_GLOB_RESULTS = 500
-MAX_GREP_MATCHES = 200
-MAX_WEB_BYTES = 2_000_000
-MAX_WEB_CHARS = 50_000
-WEB_TIMEOUT_S = 30
-
-MAX_ARTIFACT_LENGTH = 200_000
-MAX_ARTIFACT_TITLE_LENGTH = 200
 ARTIFACT_KINDS = ("research-notes", "analysis")
 ARTIFACT_ID_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -54,7 +43,7 @@ def _str_arg(args: dict[str, Any], key: str, *, required: bool = True) -> str:
     return value
 
 
-def truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
+def truncate(text: str, limit: int) -> str:
     """Cut `text` to `limit` characters, saying how much was dropped."""
     if len(text) <= limit:
         return text
@@ -82,7 +71,7 @@ def _walk(base: Path) -> list[Path]:
 # --- harness -----------------------------------------------------------------------------
 
 
-def _bash(repo_dir: Path) -> Tool:
+def _bash(repo_dir: Path, limits: ToolSettings) -> Tool:
     def run(args: dict[str, Any]) -> dict[str, Any]:
         command = _str_arg(args, "command")
         env = {k: v for k, v in os.environ.items() if k not in {"GITHUB_TOKEN", "GH_TOKEN"}}
@@ -93,36 +82,37 @@ def _bash(repo_dir: Path) -> Tool:
                 capture_output=True,
                 text=True,
                 check=False,
-                timeout=BASH_TIMEOUT_S,
+                timeout=limits.bash_timeout_s,
                 env=env,
             )
         except subprocess.TimeoutExpired:
-            raise ToolError(f"Command timed out after {BASH_TIMEOUT_S}s.") from None
+            raise ToolError(f"Command timed out after {limits.bash_timeout_s}s.") from None
         return {
             "exit_code": proc.returncode,
-            "stdout": truncate(proc.stdout),
-            "stderr": truncate(proc.stderr),
+            "stdout": truncate(proc.stdout, limits.max_output_chars),
+            "stderr": truncate(proc.stderr, limits.max_output_chars),
         }
 
     return Tool(
         "bash",
-        "Run a bash command in the repository checkout. 300s timeout; long output is truncated.",
+        f"Run a bash command in the repository checkout. {limits.bash_timeout_s}s timeout; long "
+        "output is truncated.",
         _schema({"command": {"type": "string"}}, ["command"]),
         run,
     )
 
 
-def _read_file(repo_dir: Path) -> Tool:
+def _read_file(repo_dir: Path, limits: ToolSettings) -> Tool:
     def run(args: dict[str, Any]) -> dict[str, Any]:
         path = _resolve(repo_dir, _str_arg(args, "path"))
         if not path.is_file():
             raise ToolError(f'"{args.get("path")}" is not a file.')
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
         offset = max(int(args.get("offset") or 1), 1)
-        limit = min(int(args.get("limit") or MAX_READ_LINES), MAX_READ_LINES)
+        limit = min(int(args.get("limit") or limits.max_read_lines), limits.max_read_lines)
         chunk = lines[offset - 1 : offset - 1 + limit]
         numbered = "\n".join(f"{offset + i}\t{line}" for i, line in enumerate(chunk))
-        return {"content": truncate(numbered), "total_lines": len(lines)}
+        return {"content": truncate(numbered, limits.max_output_chars), "total_lines": len(lines)}
 
     return Tool(
         "read_file",
@@ -139,7 +129,7 @@ def _read_file(repo_dir: Path) -> Tool:
     )
 
 
-def _glob(repo_dir: Path) -> Tool:
+def _glob(repo_dir: Path, limits: ToolSettings) -> Tool:
     def run(args: dict[str, Any]) -> dict[str, Any]:
         pattern = _str_arg(args, "pattern")
         if pattern.startswith("/") or ".." in Path(pattern).parts:
@@ -151,7 +141,8 @@ def _glob(repo_dir: Path) -> Tool:
             for p in base.glob(pattern)
             if p.is_relative_to(root) and not _SKIP_DIRS.intersection(p.relative_to(root).parts)
         )
-        return {"matches": matches[:MAX_GLOB_RESULTS], "truncated": len(matches) > MAX_GLOB_RESULTS}
+        cap = limits.max_glob_results
+        return {"matches": matches[:cap], "truncated": len(matches) > cap}
 
     return Tool(
         "glob",
@@ -161,7 +152,7 @@ def _glob(repo_dir: Path) -> Tool:
     )
 
 
-def _grep(repo_dir: Path) -> Tool:
+def _grep(repo_dir: Path, limits: ToolSettings) -> Tool:
     def run(args: dict[str, Any]) -> dict[str, Any]:
         try:
             regex = re.compile(_str_arg(args, "pattern"))
@@ -183,7 +174,7 @@ def _grep(repo_dir: Path) -> Tool:
             for number, line in enumerate(text.splitlines(), start=1):
                 if regex.search(line):
                     matches.append(f"{rel}:{number}:{line[:300]}")
-                    if len(matches) >= MAX_GREP_MATCHES:
+                    if len(matches) >= limits.max_grep_matches:
                         return {"matches": matches, "truncated": True}
         return {"matches": matches, "truncated": False}
 
@@ -312,27 +303,27 @@ def html_to_text(html: str) -> str:
     return re.sub(r"\n\s*\n+", "\n\n", re.sub(r"[ \t]+", " ", text)).strip()
 
 
-def _web_fetch() -> Tool:
+def _web_fetch(limits: ToolSettings) -> Tool:
     def run(args: dict[str, Any]) -> dict[str, Any]:
         url = _str_arg(args, "url")
         if not url.startswith(("http://", "https://")):
             raise ToolError("Only http(s) URLs can be fetched.")
         try:
-            with requests.get(url, timeout=WEB_TIMEOUT_S, stream=True) as resp:
-                body = resp.raw.read(MAX_WEB_BYTES + 1, decode_content=True)
+            with requests.get(url, timeout=limits.web_timeout_s, stream=True) as resp:
+                body = resp.raw.read(limits.max_web_bytes + 1, decode_content=True)
                 content_type = resp.headers.get("content-type", "")
                 status = resp.status_code
                 encoding = resp.encoding or "utf-8"
         except requests.RequestException as exc:
             raise ToolError(f"Fetch failed: {exc}") from None
-        text = body[:MAX_WEB_BYTES].decode(encoding, errors="replace")
+        text = body[: limits.max_web_bytes].decode(encoding, errors="replace")
         if "html" in content_type.lower():
             text = html_to_text(text)
         return {
             "status": status,
             "content_type": content_type,
-            "content": truncate(text, MAX_WEB_CHARS),
-            "truncated": len(body) > MAX_WEB_BYTES or len(text) > MAX_WEB_CHARS,
+            "content": truncate(text, limits.max_web_chars),
+            "truncated": len(body) > limits.max_web_bytes or len(text) > limits.max_web_chars,
         }
 
     return Tool(
@@ -343,12 +334,19 @@ def _web_fetch() -> Tool:
     )
 
 
-def harness_tools(repo_dir: Path, *, read_only: bool, web: bool) -> list[Tool]:
-    tools = [_bash(repo_dir), _read_file(repo_dir), _glob(repo_dir), _grep(repo_dir)]
+def harness_tools(
+    repo_dir: Path, limits: ToolSettings, *, read_only: bool, web: bool
+) -> list[Tool]:
+    tools = [
+        _bash(repo_dir, limits),
+        _read_file(repo_dir, limits),
+        _glob(repo_dir, limits),
+        _grep(repo_dir, limits),
+    ]
     if not read_only:
         tools += [_write_file(repo_dir), _edit_file(repo_dir)]
     if web:
-        tools.append(_web_fetch())
+        tools.append(_web_fetch(limits))
     return tools
 
 
@@ -375,18 +373,21 @@ def artifact_path(cfg: Config, artifact: str) -> Path | None:
 
 
 def artifact_tools(cfg: Config, can_save: bool) -> list[Tool]:
+    max_title = cfg.settings.tools.max_artifact_title_chars
+    max_chars = cfg.settings.tools.max_artifact_chars
+
     def save(args: dict[str, Any]) -> dict[str, Any]:
         kind = _str_arg(args, "kind")
         title = _str_arg(args, "title")
         markdown = _str_arg(args, "markdown")
         if kind not in ARTIFACT_KINDS:
             return {"saved": False, "error": f"kind must be one of {list(ARTIFACT_KINDS)}."}
-        if not title or len(title) > MAX_ARTIFACT_TITLE_LENGTH:
-            return {"saved": False, "error": "title must be 1-200 characters."}
-        if not markdown or len(markdown) > MAX_ARTIFACT_LENGTH:
+        if not title or len(title) > max_title:
+            return {"saved": False, "error": f"title must be 1-{max_title} characters."}
+        if not markdown or len(markdown) > max_chars:
             return {
                 "saved": False,
-                "error": f"markdown must be 1-{MAX_ARTIFACT_LENGTH} characters.",
+                "error": f"markdown must be 1-{max_chars} characters.",
             }
         new_id = artifact_id(kind, title)
         path = artifact_path(cfg, new_id)
@@ -431,8 +432,8 @@ def artifact_tools(cfg: Config, can_save: bool) -> list[Tool]:
         _schema(
             {
                 "kind": {"type": "string", "enum": list(ARTIFACT_KINDS)},
-                "title": {"type": "string", "minLength": 1, "maxLength": MAX_ARTIFACT_TITLE_LENGTH},
-                "markdown": {"type": "string", "minLength": 1, "maxLength": MAX_ARTIFACT_LENGTH},
+                "title": {"type": "string", "minLength": 1, "maxLength": max_title},
+                "markdown": {"type": "string", "minLength": 1, "maxLength": max_chars},
             },
             ["kind", "title", "markdown"],
         ),

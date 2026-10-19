@@ -90,7 +90,7 @@ def _run(
             text=True,
             check=False,
             env=_git_env(),
-            timeout=600,
+            timeout=cfg.settings.git.timeout_s,
         )
     except subprocess.TimeoutExpired as exc:
         raise GitError(f"git {args[0]} timed out after {exc.timeout:.0f}s.") from None
@@ -106,11 +106,13 @@ def _git_env() -> dict[str, str]:
     return env
 
 
-def clone_repo(cfg: Config, dest: Path | None = None, *, remote_url: str | None = None) -> Path:
+def clone_repo(
+    cfg: Config, dest: Path | None = None, *, remote_url: str | None = None, setup: bool = True
+) -> Path:
     """Fresh shallow clone into a new temp dir under `dest` (default `<state_dir>/work`).
 
     Sets a repo-local bot identity (`cfg.bot_name`/`bot_email`, else `BOT_NAME`/`BOT_EMAIL`)
-    and runs `cfg.setup_command` inside the checkout.
+    and, when `setup`, runs the `[git] setup_command` inside the checkout.
     """
     parent = dest if dest is not None else cfg.state_dir / "work"
     parent.mkdir(parents=True, exist_ok=True)
@@ -122,9 +124,9 @@ def clone_repo(cfg: Config, dest: Path | None = None, *, remote_url: str | None 
     )
     _run(cfg, ["config", "user.name", cfg.bot_name or BOT_NAME], repo_dir, auth=False)
     _run(cfg, ["config", "user.email", cfg.bot_email or BOT_EMAIL], repo_dir, auth=False)
-    if cfg.setup_command:
+    if setup and cfg.settings.git.setup_command:
         proc = subprocess.run(
-            cfg.setup_command,
+            cfg.settings.git.setup_command,
             shell=True,
             cwd=repo_dir,
             capture_output=True,

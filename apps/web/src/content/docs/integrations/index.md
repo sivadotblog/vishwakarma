@@ -47,7 +47,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.VK_GITHUB_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          VK_MODEL: ${{ vars.VK_MODEL || 'google:gemini-3.5-flash' }}
           VK_REPO: ${{ github.repository }}
           VK_STATE_DIR: ${{ runner.temp }}/vk-state
         run: uv run --package vk vk issue ${{ github.event.issue.number }} --unattended

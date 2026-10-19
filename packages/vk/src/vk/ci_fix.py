@@ -12,7 +12,6 @@ from vk.config import Config
 from vk.github import GitHub
 from vk.models import CiDiagnosis
 from vk.pipeline import (
-    MAX_CI_FIX_ATTEMPTS,
     LoopResult,
     ModelFactory,
     PrOps,
@@ -63,7 +62,8 @@ def run_ci_fix(
 
     mine = ops.my_comments(ctx)
     attempts = sum(ATTEMPT_MARKER in body for body in mine)
-    if attempts >= MAX_CI_FIX_ATTEMPTS:
+    max_attempts = cfg.settings.pipeline.max_ci_fix_attempts
+    if attempts >= max_attempts:
         if any(PAUSE_MARKER in body for body in mine):
             return f"Automated CI fixes on PR #{pr_number} are already paused."
         ops.comment(
@@ -71,12 +71,12 @@ def run_ci_fix(
             f"looping. {attempts} attempts have not turned the checks green, so the rest needs "
             "a person."
         )
-        return f"PR #{pr_number} hit the cap of {MAX_CI_FIX_ATTEMPTS} CI fix attempts; paused."
+        return f"PR #{pr_number} hit the cap of {max_attempts} CI fix attempts; paused."
 
     names = ", ".join(f"`{run['name']}`" for run in failed)
     ops.comment(
         f"{ATTEMPT_MARKER}\nCI failed on `{sha[:7]}` ({names}). Starting fix attempt "
-        f"{attempts + 1} of {MAX_CI_FIX_ATTEMPTS}."
+        f"{attempts + 1} of {max_attempts}."
     )
     head, base = pr["head"]["ref"], pr["base"]["ref"]
     started = time.monotonic()

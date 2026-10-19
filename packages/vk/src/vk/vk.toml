@@ -1,0 +1,59 @@
+# VK settings: the one place for models, token budgets, loop caps and limits.
+#
+# Secrets and per-run values stay in the environment: GITHUB_TOKEN, GEMINI_API_KEY,
+# VK_BOT_LOGIN, VK_REPO, VK_STATE_DIR, VK_LOG_LEVEL. Set VK_CONFIG to the path of another copy
+# of this file to use it instead. Unknown keys are an error, so a typo fails loudly.
+
+# Every clan gets these unless its own [clans.<name>] table sets a value.
+[defaults]
+model = "google:gemini-3.5-flash" # native provider:model
+max_input_tokens = 2_000_000      # per agent run
+max_output_tokens = 100_000       # per agent run
+# max_total_tokens = 2_100_000    # input + output per agent run; unset = no limit
+# max_requests = 200              # model requests per agent run; unset = no limit
+output_retries = 3                # retries when the structured output fails validation
+
+# One table per clan. An empty table uses [defaults]. Example:
+#   [clans.implementer]
+#   model = "anthropic:claude-sonnet-5-5"
+#   max_output_tokens = 200_000
+[clans.classifier]
+[clans.researcher]
+[clans.analyst]
+[clans.implementer]
+[clans.reviewer]
+[clans.triager]
+[clans.pr_writer]
+[clans.ci_diagnoser]
+
+[pipeline]
+max_review_cycles = 2   # reviewer "request_changes" revisions before giving up
+max_ci_fix_attempts = 2 # automated CI fix attempts per PR before pausing
+
+[prompts]
+max_repo_instruction_chars = 20_000 # per AGENTS.md / CLAUDE.md injected into clan prompts
+purpose_chars = 6_000               # of AGENTS.md then README.md shown to the triager
+
+[tools]
+bash_timeout_s = 300
+max_output_chars = 30_000 # any one tool result
+max_read_lines = 2_000
+max_glob_results = 500
+max_grep_matches = 200
+max_web_bytes = 2_000_000
+max_web_chars = 50_000
+web_timeout_s = 30
+max_artifact_chars = 200_000
+max_artifact_title_chars = 200
+
+[git]
+timeout_s = 600
+setup_command = "" # run in each fresh clone (install deps); empty = none
+
+[github]
+timeout_s = 30
+log_tail_chars = 4_000 # of each failed CI job log handed to the CI diagnoser
+
+[prefect]
+repo = "sivadotblog/vishwakarma"
+flow_timeout_s = 3_600

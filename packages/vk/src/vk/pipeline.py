@@ -33,13 +33,10 @@ from vk.tools import load_skill, preference_tools
 
 log = logging.getLogger(__name__)
 
-MAX_REVIEW_CYCLES = 2
-MAX_CI_FIX_ATTEMPTS = 2
 STATUS_LABELS = ("vk:in-progress", "vk:pr-open", "vk:needs-info", "vk:blocked")
 IN_PROGRESS, PR_OPEN, NEEDS_INFO, BLOCKED = STATUS_LABELS
 TRUSTED_ROLES = {"admin", "maintain", "write", "triage"}  # same bar as the workflow's check
 
-PURPOSE_CHARS = 6000  # of AGENTS.md then README.md shown to the triager as the repo's purpose
 
 ModelFactory = Callable[[str], Model]
 
@@ -317,7 +314,7 @@ def implement_and_review(
     progress: Callable[[str], None] | None = None,
     branch: str | None = None,
 ) -> LoopResult:
-    """Implementer then reviewer, with up to MAX_REVIEW_CYCLES revisions on `request_changes`.
+    """Implementer then reviewer, with up to `max_review_cycles` revisions on `request_changes`.
 
     `task` is the implementer's self-contained first message and `brief` the context the
     reviewer needs (work item, criteria, artifact ids); the implementation report is appended
@@ -333,6 +330,7 @@ def implement_and_review(
 
     impl = implement(task)
     revisions = 0
+    max_cycles = stages.cfg.settings.pipeline.max_review_cycles
     while True:
         review_message = "\n\n".join(
             [
@@ -348,13 +346,11 @@ def implement_and_review(
             len(review.blocking_findings),
             revisions + 1,
         )
-        if review.verdict != "request_changes" or revisions == MAX_REVIEW_CYCLES:
+        if review.verdict != "request_changes" or revisions == max_cycles:
             return LoopResult(impl, review, review.verdict == "approve", revisions)
         revisions += 1
         if progress:
-            progress(
-                f"The reviewer asked for changes ({revisions} of {MAX_REVIEW_CYCLES}). Revising."
-            )
+            progress(f"The reviewer asked for changes ({revisions} of {max_cycles}). Revising.")
         revision = "\n\n".join(
             [
                 task,
@@ -442,8 +438,8 @@ def run_issue(
 
 
 def _repo_purpose(ops: IssueOps) -> str:
-    """`AGENTS.md` then `README.md` from the default branch, cut at `PURPOSE_CHARS` in total."""
-    parts, left = [], PURPOSE_CHARS
+    """`AGENTS.md` then `README.md` from the default branch, cut at `purpose_chars` in total."""
+    parts, left = [], ops.gh.cfg.settings.prompts.purpose_chars
     for path in ("AGENTS.md", "README.md"):
         if left <= 0:
             break

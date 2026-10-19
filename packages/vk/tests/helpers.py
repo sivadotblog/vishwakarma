@@ -3,6 +3,7 @@
 import json
 import subprocess
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -17,6 +18,20 @@ from pydantic_ai import (
 )
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+from vk.config import Config, read_settings
+
+SETTINGS = read_settings()  # the shipped vk.toml
+
+
+def with_settings(cfg: Config, **sections: dict[str, Any]) -> Config:
+    """`cfg` with keys replaced in named settings sections, e.g. `git={"setup_command": "x"}`."""
+    updates = {
+        name: getattr(cfg.settings, name).model_copy(update=values)
+        for name, values in sections.items()
+    }
+    return replace(cfg, settings=cfg.settings.model_copy(update=updates))
+
 
 BRANCH = "vk/bug-dedupe"
 CLS = {

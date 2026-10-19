@@ -18,8 +18,6 @@ log = logging.getLogger(__name__)
 
 API = "https://api.github.com"
 API_VERSION = "2022-11-28"
-TIMEOUT = 30
-LOG_TAIL_CHARS = 4000
 FAILED = {"failure", "timed_out", "cancelled", "action_required"}
 
 
@@ -43,7 +41,8 @@ class GitHub:
             "X-GitHub-Api-Version": API_VERSION,
         }
         try:
-            resp = self.session.request(method, API + path, headers=headers, timeout=TIMEOUT, **kw)
+            timeout = self.cfg.settings.github.timeout_s
+            resp = self.session.request(method, API + path, headers=headers, timeout=timeout, **kw)
         except requests.RequestException as exc:
             log.warning("github %s %s failed: %s", method, path, type(exc).__name__)
             raise GitHubError(f"GitHub request failed: {exc}", 0) from exc
@@ -171,7 +170,8 @@ def _ci_failure_context(gh: GitHub, a: Args) -> Any:
             "GET", gh.repo(f"/check-runs/{run['id']}/annotations"), params={"per_page": 50}
         )
         try:  # for GitHub Actions the check run id is the job id
-            log_tail = gh.text(gh.repo(f"/actions/jobs/{run['id']}/logs"))[-LOG_TAIL_CHARS:]
+            job_log = gh.text(gh.repo(f"/actions/jobs/{run['id']}/logs"))
+            log_tail = job_log[-gh.cfg.settings.github.log_tail_chars :]
         except ToolError:
             log_tail = None
         failed.append(

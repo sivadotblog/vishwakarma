@@ -16,7 +16,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from vk.approval import Caller
 from vk.config import Config
 from vk.github import GitHub
-from vk.pipeline import MAX_REVIEW_CYCLES, PURPOSE_CHARS, STATUS_LABELS, run_issue
+from vk.pipeline import STATUS_LABELS, run_issue
 from vk.tools import preferences_path
 
 from .helpers import (
@@ -26,12 +26,16 @@ from .helpers import (
     IMPL,
     MEMORY_TOOLS,
     REVIEW,
+    SETTINGS,
     Call,
     FakeSession,
     clan_models,
     implementer_turns,
     sh,
 )
+
+MAX_REVIEW_CYCLES = SETTINGS.pipeline.max_review_cycles
+PURPOSE_CHARS = SETTINGS.prompts.purpose_chars
 
 ISSUE_BODY = "Users get two reset emails per request."
 ISSUE = {

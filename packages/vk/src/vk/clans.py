@@ -22,7 +22,6 @@ log = logging.getLogger(__name__)
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 # Agent instruction files a target repo may carry at its root, in injection order.
 REPO_INSTRUCTION_FILES = ("AGENTS.md", "CLAUDE.md")
-MAX_REPO_INSTRUCTIONS = 20_000  # characters per file
 
 
 def load_prompt(name: str, **values: str) -> str:
@@ -41,17 +40,21 @@ def _classifier(_cfg: Config, _repo: Path, _remote: str | None) -> list[Tool]:
 
 
 def _researcher(cfg: Config, repo: Path, _remote: str | None) -> list[Tool]:
-    web = [t for t in harness_tools(repo, read_only=True, web=True) if t.name == "web_fetch"]
+    harness = harness_tools(repo, cfg.settings.tools, read_only=True, web=True)
+    web = [t for t in harness if t.name == "web_fetch"]
     return [*web, *artifact_tools(cfg, can_save=True)]
 
 
 def _analyst(cfg: Config, repo: Path, _remote: str | None) -> list[Tool]:
-    return [*harness_tools(repo, read_only=True, web=False), *artifact_tools(cfg, can_save=True)]
+    return [
+        *harness_tools(repo, cfg.settings.tools, read_only=True, web=False),
+        *artifact_tools(cfg, can_save=True),
+    ]
 
 
 def _implementer(cfg: Config, repo: Path, remote: str | None) -> list[Tool]:
     return [
-        *harness_tools(repo, read_only=False, web=False),
+        *harness_tools(repo, cfg.settings.tools, read_only=False, web=False),
         *git.git_tools(cfg, repo, allow_push=True, remote_url=remote),
         *artifact_tools(cfg, can_save=False),
     ]
@@ -59,7 +62,7 @@ def _implementer(cfg: Config, repo: Path, remote: str | None) -> list[Tool]:
 
 def _reviewer(cfg: Config, repo: Path, remote: str | None) -> list[Tool]:
     return [
-        *harness_tools(repo, read_only=True, web=False),
+        *harness_tools(repo, cfg.settings.tools, read_only=True, web=False),
         *git.git_tools(cfg, repo, allow_push=False, remote_url=remote),
         *artifact_tools(cfg, can_save=False),
     ]
@@ -74,19 +77,22 @@ class Clan:
 
     def prompt(self, cfg: Config, repo_dir: Path | None) -> str:
         text = load_prompt(self.name, repo=cfg.repo, repo_dir=str(repo_dir) if repo_dir else "")
-        return text + repo_instructions(repo_dir) if repo_dir else text
+        limit = cfg.settings.prompts.max_repo_instruction_chars
+        return text + repo_instructions(repo_dir, limit) if repo_dir else text
 
 
-def repo_instructions(repo_dir: Path) -> str:
-    """The target repo's own agent instructions, so clans follow its toolchain and rules."""
+def repo_instructions(repo_dir: Path, limit: int) -> str:
+    """The target repo's own agent instructions (`limit` characters per file), so clans follow
+    its toolchain and rules.
+    """
     sections = []
     for name in REPO_INSTRUCTION_FILES:
         path = repo_dir / name
         if not path.is_file():
             continue
         body = path.read_text(encoding="utf-8", errors="replace")
-        if len(body) > MAX_REPO_INSTRUCTIONS:
-            body = body[:MAX_REPO_INSTRUCTIONS] + "\n[truncated]"
+        if len(body) > limit:
+            body = body[:limit] + "\n[truncated]"
         sections.append(f"### {name}\n\n{body.strip()}")
     if not sections:
         return ""

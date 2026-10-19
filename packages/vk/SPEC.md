@@ -11,7 +11,7 @@ PydanticAI that works with any provider PydanticAI supports.
 | Concern | Implementation |
 |---|---|
 | Agent runtime | PydanticAI: one `Agent` per clan and per judgment agent (`triager`, `pr_writer`, `ci_diagnoser`), each with a typed Pydantic output (`ToolOutput`, 3 output retries); `agents.run_typed` runs it under input and output token budgets; every tool result is capped at 30,000 characters |
-| Models | Native `provider:model` strings (`google:gemini-3.5-flash`): env `VK_MODEL`, overridden per agent with `VK_MODEL_<AGENT>`. `build_model` is the one place a gateway such as Kong can be added later |
+| Models | Native `provider:model` strings (`google:gemini-3.5-flash`): `[defaults] model` in `src/vk/vk.toml`, overridden per agent in `[clans.<name>]`. `build_model` is the one place a gateway such as Kong can be added later |
 | Intake | CLI subcommands calling `pipeline.run_issue`, `pr_review.run_review`, `ci_fix.run_ci_fix` |
 | Control flow | Python: status labels, progress comments, the clarify stop, the ≤2 revision loop, run-log and memory commits, the draft PR, every review reply. Repository code is read only by clans, from their clone; judgment agents decide from their message (`ci_diagnoser` and `pr_writer` have no tools, the `triager` only the memory tools). Every GitHub write goes through the guarded `github__*` tools from code |
 | GitHub tools | `github.py`: thin REST client on `requests` behind an allowlist, tools named `github__<name>` |
@@ -142,11 +142,10 @@ uv run pytest packages/vk      # package tests only
 uv add --package vk <pkg>      # deps (needs a justification in the PR)
 ```
 
-Env: `GITHUB_TOKEN` (required), `VK_MODEL` (required, native `provider:model`),
-`VK_MODEL_<AGENT>` (`CLASSIFIER`, `RESEARCHER`, `ANALYST`, `IMPLEMENTER`, `REVIEWER`, `TRIAGER`,
-`PR_WRITER`, `CI_DIAGNOSER`), `GEMINI_API_KEY` (or the provider's standard key),
-`VK_BOT_LOGIN`, `VK_REPO`, `VK_SETUP_COMMAND`, `VK_BRANCH_PREFIX` (`vk/`), `VK_STATE_DIR`
-(`~/.vk`), `VK_MAX_OUTPUT_TOKENS` (100000), `VK_MAX_INPUT_TOKENS` (2000000), `VK_LOG_LEVEL` (`INFO`; logs go to stderr).
+Settings: `src/vk/vk.toml` (models and per-agent token budgets in `[defaults]` and
+`[clans.<name>]`, loop caps, tool limits, timeouts, setup command); `VK_CONFIG` selects another
+file. Env: `GITHUB_TOKEN` (required), `GEMINI_API_KEY` (or the provider's standard key),
+`VK_BOT_LOGIN`, `VK_REPO`, `VK_STATE_DIR` (`~/.vk`), `VK_LOG_LEVEL` (`INFO`; logs go to stderr).
 Exit codes: 0 success, 2 configuration error, 3 token budget exceeded.
 
 ## Project Structure
@@ -231,7 +230,7 @@ def validate_branch(branch: str) -> str | None:
 5. `vk review PR` replies to every unanswered review comment (fixed with a commit
    reference, or an explanation), pushes fixes to the same branch, and appends a round to the
    log.
-6. Switching `VK_MODEL` between two providers (e.g. `google:…`, `anthropic:…`) works with
+6. Switching `[defaults] model` between two providers (e.g. `google:…`, `anthropic:…`) works with
    no code change. A LiteLLM-style `provider/model` string is a configuration error (exit 2).
 7. Unattended mode never calls a denied tool (test-enforced); there is no code path that pushes
    to main or merges.

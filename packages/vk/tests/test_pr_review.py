@@ -14,7 +14,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from vk.approval import Caller
 from vk.config import Config
 from vk.github import GitHub
-from vk.pipeline import MAX_REVIEW_CYCLES
 from vk.pr_review import REPLY_MARKER, UNSETTLED, run_review
 
 from .helpers import (
@@ -23,6 +22,7 @@ from .helpers import (
     IMPL,
     MEMORY_TOOLS,
     REVIEW,
+    SETTINGS,
     Call,
     FakeSession,
     PrSession,
@@ -33,6 +33,8 @@ from .helpers import (
     seed_branch,
     sh,
 )
+
+MAX_REVIEW_CYCLES = SETTINGS.pipeline.max_review_cycles
 
 CALLER = Caller(True, pr_number=9)
 RUN_LOG = "# Factory run log: issue #7\n"

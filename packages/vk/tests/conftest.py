@@ -27,6 +27,4 @@ def remote(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def cfg(tmp_path: Path) -> Config:
-    return Config(
-        repo="o/r", github_token="tok", model="m", clan_models={}, state_dir=tmp_path / "state"
-    )
+    return Config(repo="o/r", github_token="tok", state_dir=tmp_path / "state")

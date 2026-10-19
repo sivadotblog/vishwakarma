@@ -12,7 +12,7 @@ from vk.config import Config
 from vk.github import GitHub, github_tools, with_bot_identity
 from vk.tooling import Tool, ToolError
 
-CFG = Config(repo="o/r", github_token="tok", model="m", clan_models={}, state_dir=Path("/tmp/x"))
+CFG = Config(repo="o/r", github_token="tok", state_dir=Path("/tmp/x"))
 ATTENDED = Caller(unattended=False)
 UNATTENDED = Caller(unattended=True, issue_number=42, pr_number=57)
 

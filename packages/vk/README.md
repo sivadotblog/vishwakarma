@@ -15,21 +15,38 @@ uv tool install ./packages/vk      # or, in this monorepo: make setup
 Runtime dependencies are `pydantic-ai-slim`, `pydantic-ai-harness` and `requests`. `git` must be
 on the PATH.
 
+## Settings
+
+Models, token budgets, loop caps, tool limits and timeouts live in one file,
+[`src/vk/vk.toml`](src/vk/vk.toml), shipped with the package. `[defaults]` applies to every
+agent; a `[clans.<name>]` table (`classifier`, `researcher`, `analyst`, `implementer`, `reviewer`,
+`triager`, `pr_writer`, `ci_diagnoser`) overrides any of its keys for that agent:
+
+```toml
+[clans.implementer]
+model = "anthropic:claude-sonnet-5-5"
+max_output_tokens = 200_000
+max_total_tokens = 3_000_000
+```
+
+Per-agent keys: `model` (native `provider:model`; LiteLLM-style `provider/model` is rejected),
+`max_input_tokens`, `max_output_tokens`, `max_total_tokens`, `max_requests` (an unset limit means
+none) and `output_retries`. Input is re-sent on every turn, so it grows fastest; one implementer
+run on #17 used about 1.05M input tokens. Exceeding a budget exits 3. An unknown key or clan, or an
+invalid value, exits 2. Set `VK_CONFIG` to use another copy of the file.
+
 ## Environment
+
+Only secrets and per-run values come from the environment.
 
 | Variable                    | Meaning                                                    |
 | --------------------------- | ---------------------------------------------------------- |
 | `GITHUB_TOKEN`              | Required. Token with repo, issues and pull request access. A GitHub App installation token works. |
-| `VK_MODEL`                  | Required. Native `provider:model` string, e.g. `google:gemini-3.5-flash`. LiteLLM-style `provider/model` strings are rejected (exit 2). |
-| `VK_MODEL_<AGENT>`          | Optional per-agent override (`CLASSIFIER`, `RESEARCHER`, `ANALYST`, `IMPLEMENTER`, `REVIEWER`, `TRIAGER`, `PR_WRITER`, `CI_DIAGNOSER`), same format. |
 | `GEMINI_API_KEY`            | Key for `google:` models. Other providers use their standard variable, e.g. `ANTHROPIC_API_KEY`. |
+| `VK_CONFIG`                 | Optional path to a settings file; default is the shipped `vk.toml`. |
 | `VK_REPO`                   | Optional `owner/name`; default is read from the `origin` remote. |
-| `VK_SETUP_COMMAND`          | Optional command run in each fresh clone (install deps).   |
-| `VK_BRANCH_PREFIX`          | Default `vk/`.                                             |
 | `VK_BOT_LOGIN`              | Optional login VK acts as, e.g. `my-app[bot]`; default is `GET /user`. Required for GitHub App tokens, which cannot call `/user`. Commits are authored as this bot user (looked up via `GET /users/{login}`); if that fails, as `vk[bot]`. |
 | `VK_STATE_DIR`              | Default `~/.vk` (artifacts, clones, user preferences).     |
-| `VK_MAX_OUTPUT_TOKENS`      | Output token budget per agent run, default 100000.         |
-| `VK_MAX_INPUT_TOKENS`       | Input token budget per agent run, default 2000000. Input is re-sent on every turn, so it grows fastest; one implementer run on #17 used about 1.05M. Exceeding either budget exits 3. |
 | `VK_LOG_LEVEL`              | Log level for stderr logs (incl. token usage), default `INFO`. |
 
 A gateway such as Kong can be added later in `build_model` (`config.py`), the one place that turns
@@ -137,7 +154,8 @@ Create these in your Prefect workspace first:
 - Secret block `vk-app-private-key`: the GitHub App private key (PEM).
 - Secret block `vk-gemini-api-key`: the Gemini API key.
 - Variable `vk_app_id`: the GitHub App ID.
-- Variable `vk_model`: the model, defaults to `google:gemini-3.5-flash`.
+
+The models, the target repo (`[prefect] repo`) and the flow timeout come from `vk.toml`.
 
 Deployments are defined in `packages/vk/prefect_flows/prefect.yaml` and registered by
 `.github/workflows/prefect-deploy.yml` with `PrefectHQ/actions-prefect-deploy`, which needs the
@@ -208,7 +226,6 @@ jobs:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           VK_BOT_LOGIN: ${{ steps.app-token.outputs.app-slug }}[bot]
           PYDANTIC_AI_NO_BANNER: "1"
-          VK_MODEL: google:gemini-3.5-flash
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 ```
 

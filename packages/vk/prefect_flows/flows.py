@@ -40,7 +40,7 @@ from prefect.variables import Variable
 from pydantic_ai.exceptions import UsageLimitExceeded
 
 from vk.approval import Caller
-from vk.config import ConfigError, load_config
+from vk.config import ConfigError, config_path, load_config, read_settings
 from vk.github import GitHub, with_bot_identity
 from vk.pipeline import run_issue
 from vk.pr_review import run_review
@@ -50,8 +50,8 @@ from vk.pr_review import run_review
 from .github_app import API, AppToken, installation_token
 from .stage_tasks import prefect_stage
 
-REPO = "sivadotblog/vishwakarma"
-DEFAULT_MODEL = "google:gemini-3.5-flash"
+VK = read_settings(config_path(os.environ))
+REPO = VK.prefect.repo
 Kind = Literal["issue", "review"]
 Log = logging.Logger | logging.LoggerAdapter[logging.Logger]
 
@@ -61,7 +61,6 @@ class Settings:
     app_id: str
     private_key: str
     gemini_api_key: str
-    model: str
 
 
 def secret(name: str) -> str:
@@ -77,7 +76,6 @@ def load_settings() -> Settings:
         app_id=str(app_id),
         private_key=secret("vk-app-private-key"),
         gemini_api_key=secret("vk-gemini-api-key"),
-        model=str(Variable.get("vk_model", default=DEFAULT_MODEL)),
     )
 
 
@@ -92,7 +90,6 @@ def vk_env(
         "GITHUB_TOKEN": token.token,
         "VK_BOT_LOGIN": token.bot_login,
         "GEMINI_API_KEY": settings.gemini_api_key,
-        "VK_MODEL": settings.model,
         "VK_REPO": REPO,
         "VK_STATE_DIR": str(state_dir),
         "PYDANTIC_AI_NO_BANNER": "1",
@@ -159,11 +156,11 @@ def run_vk(kind: Kind, number: int, logger: Log, run_url: str | None) -> str:
         raise
 
 
-@flow(name="vk-issue", timeout_seconds=3600)
+@flow(name="vk-issue", timeout_seconds=VK.prefect.flow_timeout_s)
 def vk_issue(issue_number: int) -> str:
     return run_vk("issue", issue_number, get_run_logger(), flow_run.ui_url)
 
 
-@flow(name="vk-review", timeout_seconds=3600)
+@flow(name="vk-review", timeout_seconds=VK.prefect.flow_timeout_s)
 def vk_review(pr_number: int) -> str:
     return run_vk("review", pr_number, get_run_logger(), flow_run.ui_url)

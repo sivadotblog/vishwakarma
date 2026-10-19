@@ -16,7 +16,7 @@ import logging
 import re
 import shutil
 import tempfile
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic_ai.capabilities import AbstractCapability
@@ -152,7 +152,7 @@ def save(
     if refusal:
         raise git.GitError(refusal)
     # The toolchain setup is for running checks; committing markdown does not need it.
-    repo_dir = git.clone_repo(replace(cfg, setup_command=None), remote_url=remote_url)
+    repo_dir = git.clone_repo(cfg, remote_url=remote_url, setup=False)
     try:
         checkout = git.checkout_branch(cfg, repo_dir, branch, remote_url=remote_url)
         if not checkout["success"]:

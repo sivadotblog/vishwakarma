@@ -14,12 +14,12 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from vk.config import Config, build_model
 from vk.tooling import Tool
-from vk.tools import MAX_OUTPUT_CHARS, truncate
+from vk.tools import truncate
 
 log = logging.getLogger(__name__)
 
 
-def adapt(tool: Tool) -> AiTool[None]:
+def adapt(tool: Tool, max_chars: int) -> AiTool[None]:
     """Wrap a VK `Tool` so any failure goes back to the model without using retry budget."""
 
     def call(**kwargs: Any) -> str:
@@ -32,7 +32,7 @@ def adapt(tool: Tool) -> AiTool[None]:
             raise ToolFailed(str(exc)) from exc
         text = result if isinstance(result, str) else json.dumps(result, default=str)
         # Every tool result is re-sent on each later turn, so no single one may be unbounded.
-        return truncate(text, MAX_OUTPUT_CHARS)
+        return truncate(text, max_chars)
 
     return AiTool.from_schema(
         function=call,
@@ -59,15 +59,16 @@ def run_typed[T](
 
     `model` overrides `build_model` and is the seam tests use to inject a fake model.
     """
+    clan = cfg.settings.clan(name)
     llm = model or build_model(cfg, name)
     agent: Agent[None, T] = Agent(
         llm,
         name=name,
         instructions=instructions,
         output_type=output_type if output_type is str else ToolOutput(output_type),
-        tools=[adapt(t) for t in tools],
+        tools=[adapt(t, cfg.settings.tools.max_output_chars) for t in tools],
         capabilities=list(capabilities),
-        retries={"output": 3},
+        retries={"output": clan.output_retries},
     )
     model_name = llm if isinstance(llm, str) else llm.model_name
     log.info("agent %s start model=%s", name, model_name)
@@ -78,9 +79,10 @@ def run_typed[T](
                 message,
                 usage=usage,
                 usage_limits=UsageLimits(
-                    input_tokens_limit=cfg.max_input_tokens,
-                    output_tokens_limit=cfg.max_output_tokens,
-                    request_limit=None,
+                    input_tokens_limit=clan.max_input_tokens,
+                    output_tokens_limit=clan.max_output_tokens,
+                    total_tokens_limit=clan.max_total_tokens,
+                    request_limit=clan.max_requests,
                 ),
             )
         except Exception as exc:

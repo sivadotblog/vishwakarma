@@ -38,26 +38,22 @@ vk ci-fix <PR_NUMBER> [--unattended]
 
 ## Exit Codes
 
-| Code | Name                  | Description                                                                                                     |
-| ---- | --------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `0`  | Success               | The operation completes, and the factory opens or updates a PR.                                                 |
-| `2`  | Configuration Error   | A required environment variable (`GITHUB_TOKEN`, `VK_MODEL`) or `git` is missing, or the repository is invalid. |
-| `3`  | Token Budget Exceeded | Execution stops because total LLM token output exceeds `VK_MAX_OUTPUT_TOKENS`.                                  |
+| Code | Name                  | Description                                                                              |
+| ---- | --------------------- | ---------------------------------------------------------------------------------------- |
+| `0`  | Success               | The operation completes, and the factory opens or updates a PR.                          |
+| `2`  | Configuration Error   | `GITHUB_TOKEN` or `git` is missing, `vk.toml` is invalid, or the repository is invalid.  |
+| `3`  | Token Budget Exceeded | Execution stops because an agent run exceeds a token or request budget set in `vk.toml`. |
 
 ## Environment Variables Reference
 
-| Variable               | Required | Default      | Description                                                                                                                       |
-| ---------------------- | -------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------- |
-| `GITHUB_TOKEN`         | Yes      | —            | Authentication token with repository, issue, and PR write access.                                                                 |
-| `VK_MODEL`             | Yes      | —            | Default model identifier in PydanticAI `provider:model` syntax (e.g. `google:gemini-3.5-flash` or `anthropic:claude-3-5-sonnet`). |
-| `VK_MODEL_<CLAN>`      | No       | `VK_MODEL`   | Per-clan override (`CLASSIFIER`, `RESEARCHER`, `ANALYST`, `IMPLEMENTER`, `REVIEWER`, `TRIAGER`, `PR_WRITER`, `CI_DIAGNOSER`).     |
-| `VK_BOT_LOGIN`         | No       | `None`       | GitHub login for the bot user.                                                                                                    |
-| `VK_REPO`              | No       | Git `origin` | Target repository specified as `owner/repo`.                                                                                      |
-| `VK_SETUP_COMMAND`     | No       | None         | Setup shell command that runs in fresh repository clones.                                                                         |
-| `VK_BRANCH_PREFIX`     | No       | `vk/`        | Branch prefix for feature branches.                                                                                               |
-| `VK_STATE_DIR`         | No       | `~/.vk`      | Storage location for clones, agent state, and memory.                                                                             |
-| `VK_MAX_OUTPUT_TOKENS` | No       | `100000`     | Maximum token limit per agent execution.                                                                                          |
-| `VK_LOG_LEVEL`         | No       | `INFO`       | Stderr log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`).                                                                           |
+| Variable       | Required | Default      | Description                                                                                       |
+| -------------- | -------- | ------------ | ------------------------------------------------------------------------------------------------- |
+| `GITHUB_TOKEN` | Yes      | —            | Authentication token with repository, issue, and PR write access.                                 |
+| `VK_CONFIG`    | No       | `vk.toml`    | Path to a settings file (models, budgets, limits) to use instead of `packages/vk/src/vk/vk.toml`. |
+| `VK_BOT_LOGIN` | No       | `None`       | GitHub login for the bot user.                                                                    |
+| `VK_REPO`      | No       | Git `origin` | Target repository specified as `owner/repo`.                                                      |
+| `VK_STATE_DIR` | No       | `~/.vk`      | Storage location for clones, agent state, and memory.                                             |
+| `VK_LOG_LEVEL` | No       | `INFO`       | Stderr log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`).                                           |
 
 ## Additional Reference Pages
 
