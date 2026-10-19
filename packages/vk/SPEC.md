@@ -162,7 +162,7 @@ packages/vk/
     prompts/                # {classifier,researcher,analyst,implementer,reviewer}.md
                             # + {triager,triager_issue,triager_review,pr_writer,ci_diagnoser}.md,
                             # shared style.md, memory.md, revision.md, preferences.md,
-                            # review_brief.md, repo_instructions.md
+                            # review_brief.md, repo_instructions.md, tool_calls.md
     skills/                 # writing-quality/ (incl. references/)
   tests/                    # test_*.py, no network
 ```
