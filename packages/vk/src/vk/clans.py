@@ -137,10 +137,14 @@ def run_clan(
                 raise git.GitError(str(checkout["error"]))
         # Clans without a repo get a placeholder dir only for tools that ignore it.
         tools = clan.tools(cfg, repo_dir or Path.cwd(), remote_url)
+        instructions = clan.prompt(cfg, repo_dir)
+        if tools:
+            # Each turn re-sends the whole context, so batching calls cuts input tokens.
+            instructions += "\n" + load_prompt("tool_calls")
         result = agents.run_typed(
             name,
             clan.output,
-            instructions=clan.prompt(cfg, repo_dir),
+            instructions=instructions,
             message=message,
             tools=tools,
             cfg=cfg,

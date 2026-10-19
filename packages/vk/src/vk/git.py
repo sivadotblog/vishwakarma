@@ -79,7 +79,13 @@ def _auth_args(cfg: Config, remote_url: str | None) -> list[str]:
 
 
 def _run(
-    cfg: Config, args: list[str], cwd: Path | None, *, remote_url: str | None = None, auth: bool
+    cfg: Config,
+    args: list[str],
+    cwd: Path | None,
+    *,
+    remote_url: str | None = None,
+    auth: bool,
+    strip: bool = True,
 ) -> str:
     cmd = ["git", *(_auth_args(cfg, remote_url) if auth else []), *args]
     try:
@@ -97,7 +103,7 @@ def _run(
     if proc.returncode != 0:
         detail = sanitize((proc.stderr or proc.stdout).strip(), cfg.github_token)[:MAX_DETAIL]
         raise GitError(f"git {args[0]} exited {proc.returncode}: {detail}")
-    return proc.stdout.strip()
+    return proc.stdout.strip() if strip else proc.stdout
 
 
 def _git_env() -> dict[str, str]:
@@ -275,7 +281,7 @@ def read_files(
             auth=False,
         )
         return {
-            path: _run(cfg, ["show", f"FETCH_HEAD:{path}"], scratch, auth=False)
+            path: _run(cfg, ["show", f"FETCH_HEAD:{path}"], scratch, auth=False, strip=False)
             for path in listing.split("\0")
             if path and wanted(path)
         }

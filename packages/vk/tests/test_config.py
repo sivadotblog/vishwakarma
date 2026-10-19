@@ -111,6 +111,8 @@ def test_vk_config_selects_another_file(tmp_path: Path) -> None:
         ('model = "google:', 'model = "gemini/', "provider:model"),
         ("[clans.pr_writer]", '[clans.pr_writer]\nmodel = "gemini-3.5-flash"', "provider:model"),
         ("max_output_tokens = 100_000", "max_output_tokens = 0", "greater than 0"),
+        ("max_output_tokens = 100_000", 'max_output_tokens = "abc"', "valid integer"),
+        ("max_input_tokens = 2_000_000", "max_input_tokens = 12.3", "valid integer"),
         ("[prefect]", "[prefect", "not valid TOML"),
     ],
 )

@@ -1,7 +1,8 @@
 import ast
 from pathlib import Path
+from typing import Any
 
-from pydantic_ai import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai import ModelMessage, ModelRequest, ModelResponse, ToolCallPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -72,6 +73,41 @@ def test_run_clan_returns_the_clan_output_model() -> None:
 
     assert result == Classification.model_validate(payload)
     assert seen == ["classifier"]
+
+
+def _instructions(name: str, payload: dict[str, Any]) -> str:
+    """Run one clan with a fake model and return the instructions the model saw."""
+    seen: list[str] = []
+
+    def factory(_name: str) -> Model:
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            first = messages[0]
+            assert isinstance(first, ModelRequest)
+            seen.append(first.instructions or "")
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, payload)])
+
+        return FunctionModel(fn)
+
+    run_clan(name, "go", CFG, model=factory)
+    return seen[0]
+
+
+def test_clans_with_tools_are_told_to_batch_tool_calls() -> None:
+    research: dict[str, Any] = {"summary": "s", "findings": [], "gaps": [], "artifact_id": None}
+
+    assert "## Tool calls" in _instructions("researcher", research)
+
+
+def test_clans_without_tools_get_no_tool_call_section() -> None:
+    classification = {
+        "type": "bug",
+        "priority": "low",
+        "complexity": "small",
+        "affected_area": "api",
+        "summary": "s",
+    }
+
+    assert "## Tool calls" not in _instructions("classifier", classification)
 
 
 def test_no_module_carries_long_model_text() -> None:
