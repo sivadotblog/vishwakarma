@@ -54,3 +54,7 @@ max_output_tokens = 200_000
 ```
 
 To use a different file without editing the shipped one, set `VK_CONFIG` to its path.
+
+## How to Troubleshoot Failures
+
+When a Vishwakarma run stops or fails, see the [Troubleshooting guide](/how-to-guides/troubleshooting/) for solutions to exit codes, status labels, and Prefect execution failures.
