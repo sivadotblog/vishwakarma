@@ -20,7 +20,7 @@ from vk.approval import Caller
 from vk.config import ConfigError
 
 TOKEN = AppToken("ghs_secret", "vk-factory[bot]")
-SETTINGS = Settings("1", "pem", "gk", "google:m")
+SETTINGS = Settings("1", "pem", "gk")
 LOGGER = logging.getLogger("test-vk")
 
 
@@ -83,7 +83,7 @@ def test_vk_env(tmp_path: Path) -> None:
     assert env["GITHUB_TOKEN"] == "ghs_secret"
     assert env["VK_BOT_LOGIN"] == "vk-factory[bot]"
     assert env["GEMINI_API_KEY"] == "gk"
-    assert env["VK_MODEL"] == "google:m"
+    assert "VK_MODEL" not in env  # models come from vk.toml
     assert env["VK_REPO"] == "sivadotblog/vishwakarma"
     assert env["PYDANTIC_AI_NO_BANNER"] == "1"
     assert env["VK_STATE_DIR"] == str(tmp_path)
@@ -106,7 +106,7 @@ def test_run_vk_issue_calls_pipeline(monkeypatch: pytest.MonkeyPatch, comments: 
     assert caller == Caller(True, issue_number=5)
     assert cfg.repo == "sivadotblog/vishwakarma"
     assert cfg.github_token == "ghs_secret"
-    assert cfg.model == "google:m"
+    assert cfg.settings == flows.VK
     assert cfg.bot_login == "vk-factory[bot]"
     assert pipeline.kwargs == {"stage_wrapper": prefect_stage}
     assert comments.calls == []

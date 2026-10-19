@@ -18,6 +18,8 @@ from vk.git import (
     validate_branch,
 )
 
+from .helpers import with_settings
+
 TOKEN = "ghs_supersecrettoken123456"
 
 
@@ -26,15 +28,9 @@ def sh(*args: str, cwd: Path | None = None) -> str:
     return out.stdout.strip()
 
 
-def make_cfg(tmp_path: Path, setup: str | None = None) -> Config:
-    return Config(
-        repo="owner/name",
-        github_token=TOKEN,
-        model="m",
-        clan_models={},
-        state_dir=tmp_path / "state",
-        setup_command=setup,
-    )
+def make_cfg(tmp_path: Path, setup: str = "") -> Config:
+    cfg = Config(repo="owner/name", github_token=TOKEN, state_dir=tmp_path / "state")
+    return with_settings(cfg, git={"setup_command": setup})
 
 
 @pytest.fixture
@@ -88,6 +84,7 @@ def test_clone_checkout_push_roundtrip(tmp_path: Path, remote: str) -> None:
     repo = clone_repo(cfg, remote_url=remote)
     assert repo.is_relative_to(cfg.state_dir / "work")
     assert (repo / ".setup-ran").exists()
+    assert not (clone_repo(cfg, remote_url=remote, setup=False) / ".setup-ran").exists()
     assert sh("git", "config", "--local", "user.name", cwd=repo) == "vk[bot]"
 
     sh("git", "checkout", "-b", "vk/feat", cwd=repo)

@@ -3,6 +3,7 @@
 import logging
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -14,9 +15,10 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
 from vk.agents import adapt, run_typed
-from vk.config import Config
+from vk.config import ClanOverride, Config
 from vk.tooling import Tool, ToolError
-from vk.tools import MAX_OUTPUT_CHARS
+
+from .helpers import SETTINGS, with_settings
 
 
 class Verdict(BaseModel):
@@ -24,16 +26,20 @@ class Verdict(BaseModel):
     note: str | None
 
 
-def make_cfg(budget: int = 1000, input_budget: int = 2_000_000) -> Config:
-    return Config(
-        repo="o/r",
-        github_token="t",
-        model="test:m",
-        clan_models={},
-        state_dir=Path("/tmp/vk-test"),
-        max_output_tokens=budget,
-        max_input_tokens=input_budget,
-    )
+MAX_OUTPUT_CHARS = SETTINGS.tools.max_output_chars
+
+
+def make_cfg(
+    budget: int = 1000, input_budget: int = 2_000_000, total_budget: int | None = None
+) -> Config:
+    cfg = Config(repo="o/r", github_token="t", state_dir=Path("/tmp/vk-test"))
+    defaults = {
+        "model": "test:m",
+        "max_output_tokens": budget,
+        "max_input_tokens": input_budget,
+        "max_total_tokens": total_budget,
+    }
+    return with_settings(cfg, defaults=defaults)
 
 
 def final(info: AgentInfo, args: dict[str, Any], **kw: Any) -> ModelResponse:
@@ -50,8 +56,9 @@ def run(
     output_type: type = Verdict,
     budget: int = 1000,
     input_budget: int = 2_000_000,
+    total_budget: int | None = None,
 ) -> Any:
-    cfg = make_cfg(budget, input_budget)
+    cfg = make_cfg(budget, input_budget, total_budget)
     return run_typed("analyst", output_type, "be brief", "go", tools, cfg, model=model)
 
 
@@ -138,9 +145,9 @@ def test_tool_failure_does_not_use_retry_budget() -> None:
 
 
 def test_non_string_result_is_json_text() -> None:
-    echo: Callable[..., Any] = adapt(ECHO).function
+    echo: Callable[..., Any] = adapt(ECHO, MAX_OUTPUT_CHARS).function
     text_tool = Tool("t", "t", {"type": "object"}, lambda _: "plain")
-    plain: Callable[..., Any] = adapt(text_tool).function
+    plain: Callable[..., Any] = adapt(text_tool, MAX_OUTPUT_CHARS).function
     assert echo(x=2) == '{"got": 2}'
     assert plain() == "plain"
 
@@ -172,15 +179,41 @@ def test_input_token_budget_exceeded_raises_and_is_logged(
     )
 
 
+def test_total_token_budget_exceeded() -> None:
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        usage = RequestUsage(input_tokens=400, output_tokens=200)
+        return final(info, {"verdict": "ok", "note": None}, usage=usage)
+
+    with pytest.raises(UsageLimitExceeded):
+        run(FunctionModel(fn), [], total_budget=500)
+
+
+def test_budgets_come_from_the_clan_settings() -> None:
+    cfg = Config(repo="o/r", github_token="t", state_dir=Path("/tmp/vk-test"))
+    cfg = replace(
+        cfg,
+        settings=cfg.settings.model_copy(
+            update={"clans": {"analyst": ClanOverride(model="test:m", max_output_tokens=10)}}
+        ),
+    )
+
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return final(info, {"verdict": "ok", "note": None}, usage=RequestUsage(output_tokens=50))
+
+    with pytest.raises(UsageLimitExceeded):
+        run_typed("analyst", Verdict, "be brief", "go", [], cfg, model=FunctionModel(fn))
+    assert run_typed("reviewer", Verdict, "be brief", "go", [], cfg, model=FunctionModel(fn))
+
+
 def test_input_budget_defaults_to_two_million() -> None:
-    assert make_cfg().max_input_tokens == 2_000_000
+    assert SETTINGS.defaults.max_input_tokens == 2_000_000
 
 
 def test_a_large_tool_result_is_capped_with_a_note() -> None:
     big = Tool("big", "b", {"type": "object"}, lambda _: {"blob": "x" * 100_000})
     small = Tool("small", "s", {"type": "object"}, lambda _: "short")
-    capped: Callable[..., Any] = adapt(big).function
-    untouched: Callable[..., Any] = adapt(small).function
+    capped: Callable[..., Any] = adapt(big, MAX_OUTPUT_CHARS).function
+    untouched: Callable[..., Any] = adapt(small, MAX_OUTPUT_CHARS).function
     text = capped()
     assert len(text) < MAX_OUTPUT_CHARS + 100
     assert text.startswith('{"blob": "xxx')

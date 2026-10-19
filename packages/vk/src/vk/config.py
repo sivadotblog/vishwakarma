@@ -1,16 +1,19 @@
-"""Environment-driven configuration shared by every module."""
+"""Configuration shared by every module: settings from `vk.toml`, secrets from the environment."""
 
 import os
 import re
 import subprocess
-from dataclasses import dataclass
+import tomllib
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 
+from pydantic import BaseModel, ConfigDict, PositiveInt, ValidationError, field_validator
 from pydantic_ai.models import Model
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 
-# Every agent that can take a `VK_MODEL_<NAME>` override: the clans, then the judgment agents.
+# Every agent that can have a `[clans.<name>]` table: the clans, then the judgment agents.
 CLANS = (
     "classifier",
     "researcher",
@@ -22,29 +25,143 @@ CLANS = (
     "ci_diagnoser",
 )
 MODEL_FORMAT = "a native 'provider:model' string, e.g. 'google:gemini-3.5-flash'"
+DEFAULT_CONFIG = Path(__file__).parent / "vk.toml"
 
 
 class ConfigError(RuntimeError):
     """Missing or invalid configuration."""
 
 
+class _Section(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+def _native_model(name: str | None) -> str | None:
+    if name is not None and ":" not in name:
+        raise ValueError(f"{name!r} must be {MODEL_FORMAT}")
+    return name
+
+
+class ClanSettings(_Section):
+    """One agent's model and per-run budgets: `[defaults]`, or a clan's resolved settings."""
+
+    model: str
+    max_input_tokens: PositiveInt | None = None
+    max_output_tokens: PositiveInt | None = None
+    max_total_tokens: PositiveInt | None = None
+    max_requests: PositiveInt | None = None
+    output_retries: int
+
+    _check_model = field_validator("model")(_native_model)
+
+
+class ClanOverride(_Section):
+    """A `[clans.<name>]` table: any key it sets replaces the `[defaults]` value."""
+
+    model: str | None = None
+    max_input_tokens: PositiveInt | None = None
+    max_output_tokens: PositiveInt | None = None
+    max_total_tokens: PositiveInt | None = None
+    max_requests: PositiveInt | None = None
+    output_retries: int | None = None
+
+    _check_model = field_validator("model")(_native_model)
+
+
+class PipelineSettings(_Section):
+    max_review_cycles: int
+    max_ci_fix_attempts: int
+
+
+class PromptSettings(_Section):
+    max_repo_instruction_chars: PositiveInt
+    purpose_chars: PositiveInt
+
+
+class ToolSettings(_Section):
+    bash_timeout_s: PositiveInt
+    max_output_chars: PositiveInt
+    max_read_lines: PositiveInt
+    max_glob_results: PositiveInt
+    max_grep_matches: PositiveInt
+    max_web_bytes: PositiveInt
+    max_web_chars: PositiveInt
+    web_timeout_s: PositiveInt
+    max_artifact_chars: PositiveInt
+    max_artifact_title_chars: PositiveInt
+
+
+class GitSettings(_Section):
+    timeout_s: PositiveInt
+    setup_command: str
+
+
+class GitHubSettings(_Section):
+    timeout_s: PositiveInt
+    log_tail_chars: PositiveInt
+
+
+class PrefectSettings(_Section):
+    repo: str
+    flow_timeout_s: PositiveInt
+
+
+class Settings(_Section):
+    """The whole `vk.toml`."""
+
+    defaults: ClanSettings
+    clans: dict[str, ClanOverride]
+    pipeline: PipelineSettings
+    prompts: PromptSettings
+    tools: ToolSettings
+    git: GitSettings
+    github: GitHubSettings
+    prefect: PrefectSettings
+
+    @field_validator("clans")
+    @classmethod
+    def _known_clans(cls, clans: dict[str, ClanOverride]) -> dict[str, ClanOverride]:
+        if unknown := sorted(set(clans) - set(CLANS)):
+            raise ValueError(f"unknown clans {unknown}; known: {list(CLANS)}")
+        return clans
+
+    def clan(self, name: str) -> ClanSettings:
+        """`[defaults]` with the clan's own table laid over it."""
+        override = self.clans.get(name)
+        if override is None:
+            return self.defaults
+        return self.defaults.model_copy(update=override.model_dump(exclude_none=True))
+
+
+def config_path(env: Mapping[str, str]) -> Path:
+    """`VK_CONFIG` when set, else the `vk.toml` shipped with the package."""
+    return Path(env["VK_CONFIG"]).expanduser() if env.get("VK_CONFIG") else DEFAULT_CONFIG
+
+
+def read_settings(path: Path = DEFAULT_CONFIG) -> Settings:
+    try:
+        with path.open("rb") as handle:
+            return Settings.model_validate(tomllib.load(handle))
+    except OSError as exc:
+        raise ConfigError(f"Cannot read settings file {path}: {exc}") from exc
+    except tomllib.TOMLDecodeError as exc:
+        raise ConfigError(f"{path} is not valid TOML: {exc}") from exc
+    except ValidationError as exc:
+        raise ConfigError(f"{path} is invalid:\n{exc}") from exc
+
+
 @dataclass(frozen=True)
 class Config:
     repo: str  # "owner/name"
     github_token: str
-    model: str
-    clan_models: dict[str, str]
     state_dir: Path
-    branch_prefix: str = "vk/"
-    setup_command: str | None = None
-    max_output_tokens: int = 100_000
-    max_input_tokens: int = 2_000_000
+    settings: Settings = field(default_factory=read_settings)
     bot_login: str | None = None
     bot_name: str | None = None  # git author name; set from `bot_login` by `with_bot_identity`
     bot_email: str | None = None
 
     def model_for(self, clan: str) -> str:
-        return self.clan_models.get(clan, self.model)
+        return self.settings.clan(clan).model
 
 
 _REMOTE = re.compile(r"github\.com[:/]([\w.-]+/[\w.-]+?)(?:\.git)?/?$")
@@ -68,41 +185,15 @@ def detect_repo(cwd: Path | None = None) -> str:
 def load_config(env: dict[str, str] | None = None, cwd: Path | None = None) -> Config:
     e = dict(os.environ) if env is None else env
     token = e.get("GITHUB_TOKEN")
-    model = e.get("VK_MODEL")
     if not token:
         raise ConfigError("GITHUB_TOKEN is required.")
-    if not model:
-        raise ConfigError(f"VK_MODEL is required: {MODEL_FORMAT}.")
-    clan_models = {s: e[f"VK_MODEL_{s.upper()}"] for s in CLANS if e.get(f"VK_MODEL_{s.upper()}")}
-    for var, name in (
-        ("VK_MODEL", model),
-        *((f"VK_MODEL_{s.upper()}", m) for s, m in clan_models.items()),
-    ):
-        if ":" not in name:
-            raise ConfigError(f"{var}={name!r} must be {MODEL_FORMAT}.")
+    settings = read_settings(config_path(e))
     repo = e.get("VK_REPO") or detect_repo(cwd)
-    raw_max_output = e.get("VK_MAX_OUTPUT_TOKENS", "100000")
-    try:
-        max_output_tokens = int(raw_max_output)
-    except ValueError:
-        raise ConfigError(f"VK_MAX_OUTPUT_TOKENS={raw_max_output!r} must be an integer.") from None
-
-    raw_max_input = e.get("VK_MAX_INPUT_TOKENS", "2000000")
-    try:
-        max_input_tokens = int(raw_max_input)
-    except ValueError:
-        raise ConfigError(f"VK_MAX_INPUT_TOKENS={raw_max_input!r} must be an integer.") from None
-
     return Config(
         repo=repo,
         github_token=token,
-        model=model,
-        clan_models=clan_models,
         state_dir=Path(e.get("VK_STATE_DIR", "~/.vk")).expanduser(),
-        branch_prefix=e.get("VK_BRANCH_PREFIX", "vk/"),
-        setup_command=e.get("VK_SETUP_COMMAND") or None,
-        max_output_tokens=max_output_tokens,
-        max_input_tokens=max_input_tokens,
+        settings=settings,
         bot_login=e.get("VK_BOT_LOGIN") or None,
     )
 

@@ -5,7 +5,6 @@ import pytest
 from vk.config import Config
 from vk.tooling import Tool, ToolError
 from vk.tools import (
-    MAX_ARTIFACT_LENGTH,
     artifact_path,
     artifact_tools,
     harness_tools,
@@ -14,6 +13,8 @@ from vk.tools import (
     preference_tools,
     preferences_path,
 )
+
+from .helpers import SETTINGS
 
 
 def by_name(tools: list[Tool]) -> dict[str, Tool]:
@@ -25,8 +26,6 @@ def cfg(tmp_path: Path) -> Config:
     return Config(
         repo="owner/name",
         github_token="t",
-        model="m",
-        clan_models={},
         state_dir=tmp_path / "state",
     )
 
@@ -41,22 +40,22 @@ def repo(tmp_path: Path) -> Path:
 
 
 def test_tool_surfaces(repo: Path) -> None:
-    ro = {t.name for t in harness_tools(repo, read_only=True, web=False)}
+    ro = {t.name for t in harness_tools(repo, SETTINGS.tools, read_only=True, web=False)}
     assert ro == {"bash", "read_file", "glob", "grep"}
-    rw = {t.name for t in harness_tools(repo, read_only=False, web=True)}
+    rw = {t.name for t in harness_tools(repo, SETTINGS.tools, read_only=False, web=True)}
     assert rw == ro | {"write_file", "edit_file", "web_fetch"}
 
 
 def test_bash_runs_in_repo_and_hides_token(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GITHUB_TOKEN", "secret")
-    bash = by_name(harness_tools(repo, read_only=True, web=False))["bash"]
+    bash = by_name(harness_tools(repo, SETTINGS.tools, read_only=True, web=False))["bash"]
     out = bash.fn({"command": 'pwd; echo -n "[$GITHUB_TOKEN]"; exit 3'})
     assert out["exit_code"] == 3
     assert str(repo.resolve()) in out["stdout"] and "[]" in out["stdout"]
 
 
 def test_read_glob_grep(repo: Path) -> None:
-    t = by_name(harness_tools(repo, read_only=True, web=False))
+    t = by_name(harness_tools(repo, SETTINGS.tools, read_only=True, web=False))
     assert "2\ttwo" in t["read_file"].fn({"path": "src/a.py", "offset": 2})["content"]
     assert t["glob"].fn({"pattern": "**/*.py"})["matches"] == ["src/a.py"]
     hits = t["grep"].fn({"pattern": "tw", "glob": "*.py"})["matches"]
@@ -65,7 +64,7 @@ def test_read_glob_grep(repo: Path) -> None:
 
 @pytest.mark.parametrize("bad", ["../x", "/etc/passwd", "src/../../x"])
 def test_path_traversal_rejected(repo: Path, bad: str) -> None:
-    t = by_name(harness_tools(repo, read_only=False, web=False))
+    t = by_name(harness_tools(repo, SETTINGS.tools, read_only=False, web=False))
     with pytest.raises(ToolError):
         t["read_file"].fn({"path": bad})
     with pytest.raises(ToolError):
@@ -77,7 +76,7 @@ def test_path_traversal_rejected(repo: Path, bad: str) -> None:
 def test_symlink_escape_rejected(repo: Path, tmp_path: Path) -> None:
     (tmp_path / "outside.txt").write_text("secret")
     (repo / "link").symlink_to(tmp_path / "outside.txt")
-    t = by_name(harness_tools(repo, read_only=True, web=False))
+    t = by_name(harness_tools(repo, SETTINGS.tools, read_only=True, web=False))
     with pytest.raises(ToolError):
         t["read_file"].fn({"path": "link"})
     with pytest.raises(ToolError):
@@ -85,7 +84,7 @@ def test_symlink_escape_rejected(repo: Path, tmp_path: Path) -> None:
 
 
 def test_edit_file_uniqueness(repo: Path) -> None:
-    edit = by_name(harness_tools(repo, read_only=False, web=False))["edit_file"]
+    edit = by_name(harness_tools(repo, SETTINGS.tools, read_only=False, web=False))["edit_file"]
     path = "src/a.py"
     with pytest.raises(ToolError, match="2 times"):
         edit.fn({"path": path, "old_string": "two", "new_string": "2"})
@@ -102,7 +101,7 @@ def test_edit_file_uniqueness(repo: Path) -> None:
 
 
 def test_write_file_creates_dirs_and_blocks_git(repo: Path) -> None:
-    write = by_name(harness_tools(repo, read_only=False, web=False))["write_file"]
+    write = by_name(harness_tools(repo, SETTINGS.tools, read_only=False, web=False))["write_file"]
     write.fn({"path": "new/dir/f.txt", "content": "x"})
     assert (repo / "new/dir/f.txt").read_text() == "x"
     with pytest.raises(ToolError):
@@ -132,7 +131,7 @@ def test_artifacts_roundtrip_and_no_overwrite(cfg: Config) -> None:
 def test_artifact_validation(cfg: Config) -> None:
     save = by_name(artifact_tools(cfg, can_save=True))["save_artifact"]
     assert save.fn({"kind": "bogus", "title": "t", "markdown": "x"})["saved"] is False
-    big = "x" * (MAX_ARTIFACT_LENGTH + 1)
+    big = "x" * (SETTINGS.tools.max_artifact_chars + 1)
     assert save.fn({"kind": "analysis", "title": "t", "markdown": big})["saved"] is False
 
 

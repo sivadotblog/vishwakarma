@@ -10,7 +10,7 @@ from vk import cli
 from vk.approval import Caller
 from vk.config import Config, ConfigError
 
-CFG = Config(repo="o/r", github_token="t", model="m", clan_models={}, state_dir=Path("/x"))
+CFG = Config(repo="o/r", github_token="t", state_dir=Path("/x"))
 
 
 class Tty:

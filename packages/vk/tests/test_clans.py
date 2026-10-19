@@ -7,12 +7,15 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from vk import clans
-from vk.clans import CLANS, MAX_REPO_INSTRUCTIONS, load_prompt, run_clan
+from vk.clans import CLANS, load_prompt, run_clan
 from vk.config import Config
 from vk.models import Classification
 
+from .helpers import SETTINGS
+
 MAX_LITERAL = 300  # characters
-CFG = Config(repo="o/r", github_token="t", model="m", clan_models={}, state_dir=Path("/x"))
+MAX_REPO_INSTRUCTIONS = SETTINGS.prompts.max_repo_instruction_chars
+CFG = Config(repo="o/r", github_token="t", state_dir=Path("/x"))
 
 
 def test_repo_instruction_files_are_injected(tmp_path: Path) -> None:

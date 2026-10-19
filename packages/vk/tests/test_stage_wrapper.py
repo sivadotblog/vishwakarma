@@ -19,7 +19,7 @@ from vk.pr_review import run_review
 from .helpers import FakeSession
 from .test_issue_pipeline import ROUTES, UNATTENDED, happy_models
 
-CFG = Config(repo="o/r", github_token="t", model="m", clan_models={}, state_dir=Path("/x"))
+CFG = Config(repo="o/r", github_token="t", state_dir=Path("/x"))
 ANALYSIS_RESULT = Analysis.model_construct()
 TRIAGE_RESULT = IssueTriage.model_construct()
 

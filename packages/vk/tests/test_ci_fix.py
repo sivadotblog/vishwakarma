@@ -8,12 +8,12 @@ from vk.approval import Caller
 from vk.ci_fix import ATTEMPT_MARKER, PAUSE_MARKER, run_ci_fix
 from vk.config import Config
 from vk.github import GitHub
-from vk.pipeline import MAX_CI_FIX_ATTEMPTS, MAX_REVIEW_CYCLES
 
 from .helpers import (
     BRANCH,
     IMPL,
     REVIEW,
+    SETTINGS,
     Call,
     FakeSession,
     PrSession,
@@ -23,6 +23,9 @@ from .helpers import (
     sh,
 )
 from .test_pr_review import CHANGES, no_model, revisions, writes
+
+MAX_CI_FIX_ATTEMPTS = SETTINGS.pipeline.max_ci_fix_attempts
+MAX_REVIEW_CYCLES = SETTINGS.pipeline.max_review_cycles
 
 CALLER = Caller(True, pr_number=9)
 PR_COMMENTS = "/issues/9/comments"
