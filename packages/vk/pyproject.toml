@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [{ name = "sivadotblog", email = "sivanandha@gmail.com" }]
 requires-python = ">=3.12"
 dependencies = [
-    "pydantic-ai-harness>=0.57.0",
+    "pydantic-ai-harness>=0.59.0",
     "pydantic-ai-slim[anthropic,google]>=2.57.0",
     "requests",
 ]
