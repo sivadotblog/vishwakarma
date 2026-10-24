@@ -36,7 +36,7 @@ jobs:
 
       # VK clones the PR branch itself, so check out the default branch.
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.0
+      - uses: astral-sh/setup-uv@v10.3.1
       - run: make setup-python
 
       # VK acts as its own GitHub App, not as a person.
