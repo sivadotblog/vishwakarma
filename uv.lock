@@ -2825,7 +2825,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "pydantic-ai-harness", specifier = ">=0.66.0" },
-    { name = "pydantic-ai-slim", extras = ["anthropic", "google"], specifier = ">=2.63.0" },
+    { name = "pydantic-ai-slim", extras = ["anthropic", "google"], specifier = ">=2.66.0" },
     { name = "requests" },
 ]
 
